@@ -1,4 +1,5 @@
 import math
+import json
 
 from wbm_util_func import *
 from PIL import Image
@@ -9,7 +10,7 @@ from scipy.cluster.hierarchy import cut_tree, dendrogram
 from scipy.stats import multivariate_normal
 from sklearn.preprocessing import MinMaxScaler
 from scipy.spatial.distance import euclidean, squareform, cdist, pdist
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, auc
 
 
 class DPGMM:
@@ -251,6 +252,10 @@ class WBM:
         self.result_save_folder = make_sub_folder('results', f'wbm_{self.map_shape}_{self.n_valid}_{self.data_len}')
         self.figure_save_folder = make_sub_folder('results', f'wbm_{self.map_shape}_{self.n_valid}_{self.data_len}',
                                                   'figures')
+        self.score_save_folder = make_sub_folder('results', f'wbm_{self.map_shape}_{self.n_valid}_{self.data_len}',
+                                                 'scores')
+        self.runtime_save_folder = make_sub_folder('results', f'wbm_{self.map_shape}_{self.n_valid}_{self.data_len}',
+                                                   'runtime')
 
         self.data_with_nan = np.empty_like(self.data, dtype=np.float)
         self.data_with_nan[self.data == 0] = np.nan
@@ -610,23 +615,26 @@ class MODEL:
 
         self.sim_rank_dict = {'EUC': {}, 'JSD': {}, 'SKL': {}, 'WMH': {}}
         self.sim_score_dict = {'EUC': {}, 'JSD': {}, 'SKL': {}, 'WMH': {}}
+        self.runtime_dict = {}
 
     def get_dpgmm(self):
-        """
-        :return: make dpgmm_list attribute
-        """
 
         self.fname_dpgmm_list = 'dpgmm_list'
         if os.path.isfile(self.wbm_obj.result_save_folder + self.fname_dpgmm_list):
+            self.dpgmm_loaded = True
             infile = open(self.wbm_obj.result_save_folder + self.fname_dpgmm_list, 'rb')
             self.dpgmm_list = pickle.load(infile, encoding='latin1')
-            print('dpgmm_list has been loaded.')
+            print('dpgmm_list has been loaded from data.')
         else:
+            self.dpgmm_loaded = False
+            time_dpgmm_start = time.time()
             self.dpgmm_list = []
             for wbm_id in tqdm(range(self.wbm_obj.data_len), desc='DPGMM...'):
                 dpgmm = DPGMM(wbm_id, self.wbm_obj)
                 dpgmm.fit_dpgmm()
                 self.dpgmm_list.append(dpgmm)
+            time_dpgmm_end = time.time()
+            self.runtime_dict['runtime_dpgmm'] = np.round(time_dpgmm_end - time_dpgmm_start, 3)
             save_list(self.dpgmm_list, self.fname_dpgmm_list, self.wbm_obj.result_save_folder)
 
     def get_skldm(self, linkage_method='complete', min_defects=2):
@@ -653,11 +661,16 @@ class MODEL:
 
         self.fname_skldm = 'skldm'
         if os.path.isfile(self.wbm_obj.result_save_folder + self.fname_skldm):
+            self.skldm_loaded = True
             infile = open(self.wbm_obj.result_save_folder + self.fname_skldm, 'rb')
             self.skldm = pickle.load(infile, encoding='latin1')
-            print('skldm has been loaded.')
+            print('skldm has been loaded from data.')
         else:
+            self.skldm_loaded = False
+            time_skldm_start = time.time()
             self.skldm = get_SKLDM(self.mean_list, self.cov_list)
+            time_skldm_end = time.time()
+            self.runtime_dict['runtime_skldm'] = np.round(time_skldm_end - time_skldm_start, 3)
             save_list(self.skldm, self.fname_skldm, self.wbm_obj.result_save_folder)
 
         for i in range(len(self.skldm)):
@@ -703,7 +716,7 @@ class MODEL:
         """
         get_cg(self, n_cg=10):
         """
-
+        time_cg_start = time.time()
         self.n_cg = n_cg
         self.weight_vector_arr = np.zeros((self.wbm_obj.data_len, self.n_cg))
         self.avg_mean_vec_list = []
@@ -733,6 +746,9 @@ class MODEL:
 
             likelihood_mtx /= likelihood_mtx.sum(axis=1).reshape(-1, 1)
             self.weight_vector_arr[wbm_id] = likelihood_mtx.mean(axis=0)
+
+        time_cg_end = time.time()
+        self.runtime_dict[f'runtime_cg_{self.n_cg}'] = np.round(time_cg_end - time_cg_start, 3)
 
         # LIKELIHOOD FOR ALL POSITIONS AND MAKE IT AS 'SUM TO ONE'
         data = self.wbm_obj.tr_valid
@@ -996,7 +1012,7 @@ class MODEL:
 
         pi_max = max(pi).round(4)
         acc = (true_label_sim_rank_sorted == target_label)[1: target_label_count].mean().round(4)
-        return acc, pi, pi_max, tpr, fpr, specificity_list
+        return acc, pi, pi_max, tpr, fpr, specificity_list, auc(fpr, tpr).round(4)
 
     def update_dict_sim_val(self, target_wf_list, sim_method='JSD', weight_type='type_2', m=1, s_out_rate=0.1):
         """
@@ -1037,11 +1053,16 @@ class MODEL:
             for target_wf in target_wf_list:
                 fname_wmhd_sim_val = f'wmhd_sim_val_{weight_type}_{m}_{s_out_rate}_wf_{target_wf}.csv'
                 if os.path.isfile(self.wbm_obj.result_save_folder + fname_wmhd_sim_val):
+                    self.wmhd_loaded = True
                     wmhd_sim_val = np.loadtxt(self.wbm_obj.result_save_folder + fname_wmhd_sim_val, delimiter=',')
                     self.sim_rank_dict[sim_method][param_str_key]['value'][target_wf] = wmhd_sim_val
                 else:
+                    self.wmhd_loaded = False
+                    time_wmhd_start = time.time()
                     wmhd_sim_val = self.wbm_obj.wmhd_sim_calc_all(target_wf, weight_type=weight_type, m=m,
                                                                   s_out_rate=s_out_rate)
+                    time_wmhd_end = time.time()
+                    self.runtime_dict['runtime_wmhd_' + param_str_key] = np.round(time_wmhd_end - time_wmhd_start, 3)
                     self.sim_rank_dict[sim_method][param_str_key]['value'][target_wf] = wmhd_sim_val
                     np.savetxt(self.wbm_obj.result_save_folder + fname_wmhd_sim_val, wmhd_sim_val,
                                delimiter=',', fmt='%1.8f')
@@ -1055,32 +1076,43 @@ class MODEL:
                 n_target_wf = len(self.sim_rank_dict[sim_method][para]['value'])
                 self.sim_rank_dict[sim_method][para]['sim_rank'] = {}
                 self.sim_score_dict[sim_method][para] = {}
-                self.sim_score_dict[sim_method][para]['acc'] = {}
+                self.sim_score_dict[sim_method][para]['acc'] = []
                 self.sim_score_dict[sim_method][para]['acc_avg'] = {}
                 self.sim_score_dict[sim_method][para]['pi'] = {}
-                self.sim_score_dict[sim_method][para]['pi_max'] = {}
+                self.sim_score_dict[sim_method][para]['pi_max'] = []
                 self.sim_score_dict[sim_method][para]['pi_max_avg'] = {}
                 self.sim_score_dict[sim_method][para]['tpr'] = {}
                 self.sim_score_dict[sim_method][para]['fpr'] = {}
+                self.sim_score_dict[sim_method][para]['auc'] = []
                 self.sim_score_dict[sim_method][para]['specificity'] = {}
                 self.sim_score_dict[sim_method][para]['xticks'] = self.xticks.tolist()
                 self.sim_score_dict[sim_method][para]['n_target_wf'] = n_target_wf
+                self.sim_score_dict[sim_method][para]['target_wf_list'] = self.wbm_obj.target_wf_list
                 acc_avg = 0
                 pi_max_avg = 0
+                auc_avg = 0
                 for target_wf, sim_val in sim_val_dict['value'].items():
                     sim_rank = np.argsort(sim_val)
                     self.sim_rank_dict[sim_method][para]['sim_rank'][target_wf] = sim_rank
-                    acc, pi, pi_max, tpr, fpr, specificity = self.calc_sim_res_score(sim_rank, rank_interval)
+                    acc, pi, pi_max, tpr, fpr, specificity, AUC = self.calc_sim_res_score(sim_rank, rank_interval)
                     acc_avg += acc
                     pi_max_avg += pi_max
-                    self.sim_score_dict[sim_method][para]['acc'][target_wf] = acc
+                    auc_avg += AUC
+                    self.sim_score_dict[sim_method][para]['acc'].append(acc)
                     self.sim_score_dict[sim_method][para]['pi'][target_wf] = pi
-                    self.sim_score_dict[sim_method][para]['pi_max'][target_wf] = pi_max
+                    self.sim_score_dict[sim_method][para]['pi_max'].append(pi_max)
                     self.sim_score_dict[sim_method][para]['tpr'][target_wf] = tpr
                     self.sim_score_dict[sim_method][para]['fpr'][target_wf] = fpr
+                    self.sim_score_dict[sim_method][para]['auc'].append(AUC)
                     self.sim_score_dict[sim_method][para]['specificity'][target_wf] = specificity
                 self.sim_score_dict[sim_method][para]['acc_avg'] = acc_avg / n_target_wf
                 self.sim_score_dict[sim_method][para]['pi_max_avg'] = pi_max_avg / n_target_wf
+                self.sim_score_dict[sim_method][para]['auc_avg'] = auc_avg / n_target_wf
+
+    def export_sim_score_dict_to_json(self):
+        export_name = self.wbm_obj.score_save_folder + f'sim_score_{get_now_str()}.json'
+        with open(export_name, 'w') as fw:
+            fw.write(json.dumps(self.sim_score_dict, indent=4, sort_keys=True))
 
 
 class WM811K_DATASET:
@@ -1244,9 +1276,6 @@ class WM811K:
         axs.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
         plt.show()
 
-
-
-#
 # def print_sim_score(target_wf_list, sim_score_dict):
 #     for sim_method in sim_score_dict.keys():
 #         sim_score_dict[sim_method]

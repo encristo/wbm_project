@@ -5,12 +5,12 @@ import pickle
 import time
 import matplotlib.pyplot as plt
 import scipy.stats as stats
+import wbm_class
 
 from datetime import datetime
 from scipy.spatial.distance import squareform
 from scipy.cluster.hierarchy import linkage
 from tqdm import *
-from wbm_class import DPGMM
 
 
 def save_list(list_obj, file_name, folder_name):
@@ -173,63 +173,75 @@ def seriation(Z, N, cur_index):
 
 
 def get_similarity_euclidean(model_obj, target_wf_list):
-    start_time = time.time()
+    time_start = time.time()
     model_obj.update_dict_sim_val(target_wf_list, sim_method='EUC')
-    model_obj.runtime_total_EUC = np.round(time.time() - start_time, 3)
-    fname_time = model_obj.wbm_obj.result_save_folder + f'runtime_total_EUC_{model_obj.runtime_total_EUC}.csv'
-    if not os.path.isfile(fname_time):
-        np.savetxt(fname_time, np.array([model_obj.runtime_total_EUC]))
-    print(f'runtime_EUC : {model_obj.runtime_total_EUC}')
+    time_end = time.time()
+    time_EUC = np.round(time_end - time_start, 3)
+    model_obj.runtime_dict['runtime_EUC'] = time_EUC
+    print(f'runtime_EUC : {time_EUC}')
 
 
 def get_similarity_JSD(model_obj, target_wf_list, n_cg=9, linkage_method='complete'):
-    time_start = time.time()
     model_obj.get_dpgmm()
-    time_get_bgm = time.time()
     model_obj.get_skldm(linkage_method=linkage_method)
-    time_get_skldm = time.time()
     model_obj.get_cg(n_cg=n_cg)
-    time_get_cg = time.time()
+    time_start = time.time()
     model_obj.update_dict_sim_val(target_wf_list, sim_method='JSD')
-    time_get_sim_JSD = time.time()
-    model_obj.runtime_get_bgm = time_get_bgm - time_start
-    model_obj.runtime_get_skldm = time_get_skldm - time_get_bgm
-    model_obj.runtime_get_cg = time_get_cg - time_get_skldm
-    model_obj.runtime_get_sim_JSD = time_get_sim_JSD - time_get_cg
-    model_obj.runtime_start_to_get_cg = time_get_cg - time_start
-    model_obj.runtime_total_JSD = np.round(time_get_sim_JSD - time_start, 3)
-    fname_time = model_obj.wbm_obj.result_save_folder + f'runtime_total_JSD_{model_obj.runtime_total_JSD}.csv'
-    if not os.path.isfile(fname_time):
-        np.savetxt(fname_time, np.array([model_obj.runtime_total_JSD]))
-    print(f'runtime_JSD : {model_obj.runtime_total_JSD}')
+    time_end = time.time()
+
+    if not model_obj.dpgmm_loaded:
+        time_JSD = np.round(time_end - time_start
+                            + model_obj.runtime_dict['runtime_dpgmm']
+                            + model_obj.runtime_dict['runtime_skldm']
+                            + model_obj.runtime_dict[f'runtime_cg_{n_cg}'], 3)
+        model_obj.runtime_dict[f'runtime_JSD_nCG_{n_cg}'] = time_JSD
+        # fname_time = model_obj.wbm_obj.result_save_folder + f'runtime_total_JSD_{model_obj.runtime_total_JSD}.csv'
+        # np.savetxt(fname_time, np.array([model_obj.runtime_total_JSD]))
+        print(f'runtime_JSD : {time_JSD}')
 
 
 def get_similarity_SKL(model_obj, target_wf_list, n_cg=9, linkage_method='complete'):
     model_obj.get_dpgmm()
     model_obj.get_skldm(linkage_method=linkage_method)
     model_obj.get_cg(n_cg=n_cg)
-    time_get_cg = time.time()
+    time_start = time.time()
     model_obj.update_dict_sim_val(target_wf_list, sim_method='SKL')
-    time_get_sim_SKL = time.time()
-    model_obj.runtime_get_sim_SKL = time_get_sim_SKL - time_get_cg
-    model_obj.runtime_total_SKL = np.round(model_obj.runtime_get_sim_SKL + model_obj.runtime_start_to_get_cg, 3)
-    fname_time = model_obj.wbm_obj.result_save_folder + f'runtime_total_SKL_{model_obj.runtime_total_SKL}.csv'
-    if not os.path.isfile(fname_time):
-        np.savetxt(fname_time, np.array([model_obj.runtime_total_SKL]))
-    print(f'runtime_SKL : {model_obj.runtime_total_SKL}')
+    time_end = time.time()
+
+    if not model_obj.dpgmm_loaded:
+        time_SKL = np.round(time_end - time_start
+                            + model_obj.runtime_dict['runtime_dpgmm']
+                            + model_obj.runtime_dict['runtime_skldm']
+                            + model_obj.runtime_dict[f'runtime_cg_{n_cg}'], 3)
+        model_obj.runtime_dict[f'runtime_SKL_nCG_{n_cg}'] = time_SKL
+        print(f'runtime_SKL : {time_SKL}')
 
 
 def get_similarity_WMHD(model_obj, target_wf_list, weight_type='type_2', m=1, s_out_rate=0.1):
-    time_start = time.time()
+    param_str_key = f'{weight_type}, {m}, {s_out_rate}'
     model_obj.update_dict_sim_val(target_wf_list,
                                   sim_method='WMH',
                                   weight_type=weight_type, m=m, s_out_rate=s_out_rate)
-    model_obj.runtime_total_WMHD = np.round(time.time() - time_start, 3)
-    fname_time = f'runtime_total_WMHD_{weight_type}_{m}_{s_out_rate}_{model_obj.runtime_total_WMHD}.csv'
-    fname_time = model_obj.wbm_obj.result_save_folder + fname_time
-    if not os.path.isfile(fname_time):
+    if not model_obj.wmhd_loaded:
+        runtime_wmhd = model_obj.runtime_dict['runtime_wmhd_'+param_str_key]
+        fname_time = f'runtime_total_WMHD_{weight_type}_{m}_{s_out_rate}_{runtime_wmhd}.csv'
+        fname_time = model_obj.wbm_obj.result_save_folder + fname_time
         np.savetxt(fname_time, np.array([model_obj.runtime_total_WMHD]))
-    print(f'runtime_WMHD (weight_type: {weight_type} m:{m} s_out_rate: {s_out_rate}) {model_obj.runtime_total_WMHD}')
+        print(f'runtime_WMHD (weight_type: {weight_type} m:{m} s_out_rate: {s_out_rate}) {runtime_wmhd}')
+
+
+def plot_roc_curve(sim_score_dict, target_wf_list):
+    n_target_wf = len(target_wf_list)
+    fig, axs = plt.subplots(1, n_target_wf, figsize=(4*n_target_wf, 4))
+    for sim_method in sim_score_dict.keys():
+        for para in sim_score_dict[sim_method].keys():
+            for i, target_wf in enumerate(target_wf_list):
+                tpr = sim_score_dict[sim_method][para]['tpr'][target_wf]
+                fpr = sim_score_dict[sim_method][para]['fpr'][target_wf]
+                AUC = sim_score_dict[sim_method][para]['auc'][i].round(2)
+                roc_label = f'{sim_method}_{AUC}'
+                axs[i].plot(fpr, tpr, label=roc_label)
+    plt.show()
 
 
 # OLD Functions : not using
@@ -322,8 +334,8 @@ def plotPoints(data, affiliation, means, covs, delta=1, numLine=3):
 
 def plot_dpgmm_xy_tr_example(wbm_id, wbm_obj, contour=True, figsize=(18, 3), save=True, save_format='svg'):
     fig, axs = plt.subplots(1, 6, figsize=figsize)
-    dpgmm_xy = DPGMM(wbm_id=wbm_id, wbm_obj=wbm_obj, coordinate='xy')
-    dpgmm_tr = DPGMM(wbm_id=wbm_id, wbm_obj=wbm_obj, coordinate='polar')
+    dpgmm_xy = wbm_class.DPGMM(wbm_id=wbm_id, wbm_obj=wbm_obj, coordinate='xy')
+    dpgmm_tr = wbm_class.DPGMM(wbm_id=wbm_id, wbm_obj=wbm_obj, coordinate='polar')
     dpgmm_xy.fit_dpgmm()
     dpgmm_tr.fit_dpgmm()
 
