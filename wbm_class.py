@@ -605,6 +605,63 @@ class WBM:
         return np.array(wmhd_sim_res)
 
 
+class CG:
+    def __init__(self, wbm_obj, res_linkage, mean_arr, cov_arr, n_cg=9):
+
+        self.weight_vector_arr = np.zeros((wbm_obj.data_len, n_cg))
+        self.avg_mean_vec_list = []
+        self.avg_cov_mtx_list = []
+        self.n_members_list = []
+        self.cluster_info = cut_tree(res_linkage, n_cg).reshape(-1, )
+
+        n_elements = len(res_linkage) + 1
+
+        for i in range(n_cg):
+            self.n_members_list.append((self.cluster_info == i).sum())
+            self.avg_mean_vec_list.append(
+                mean_arr[list(np.arange(n_elements)[(self.cluster_info == i).reshape(-1, )])].mean(axis=0))
+            self.avg_cov_mtx_list.append(
+                cov_arr[list(np.arange(n_elements)[(self.cluster_info == i).reshape(-1, )])].mean(axis=0))
+
+        self.avg_mean_vec_list = np.array(self.avg_mean_vec_list)
+        self.avg_cov_mtx_list = np.array(self.avg_cov_mtx_list)
+        # LIKEIHOOD MTX, WEIGHT VECTOR
+        for wbm_id in range(wbm_obj.data_len):
+            data = wbm_obj.get_polar_points(wbm_id)
+            data_len = len(data)
+            likelihood_mtx = np.zeros((data_len, n_cg))
+            for i in range(n_cg):
+                likelihood_mtx[:, i] = multivariate_normal.pdf(data, self.avg_mean_vec_list[i],
+                                                               self.avg_cov_mtx_list[i])
+
+            likelihood_mtx /= likelihood_mtx.sum(axis=1).reshape(-1, 1)
+            self.weight_vector_arr[wbm_id] = likelihood_mtx.mean(axis=0)
+
+        # LIKELIHOOD FOR ALL POSITIONS AND MAKE IT AS 'SUM TO ONE'
+        data = wbm_obj.tr_valid
+        self.likelihood_all = np.zeros((n_cg, len(data)))
+        self.likelihood_all_sum_to_one = np.zeros((n_cg, len(data)))
+
+        for i in range(n_cg):
+            self.likelihood_all[i] = multivariate_normal.pdf(data,
+                                                             self.avg_mean_vec_list[i],
+                                                             self.avg_cov_mtx_list[i])
+            self.likelihood_all_sum_to_one[i] = self.likelihood_all[i] / self.likelihood_all[i].sum()
+
+        # REPRODUCED MAP
+        self.re_map = self.weight_vector_arr @ self.likelihood_all_sum_to_one
+        self.re_map_scaled = np.zeros((wbm_obj.data_len, wbm_obj.n_valid))
+
+        for i in range(wbm_obj.data_len):
+            self.re_map_scaled[i] = MinMaxScaler().fit_transform(self.re_map[i].reshape(-1, 1)).flatten()
+
+        # MSE LOSS : BETWEEN ORIGINAL WBM vs. RESCALED REPRODUCED MAP
+        self.loss_raw = wbm_obj.data_without_nan - self.re_map_scaled
+        self.loss_raw = self.loss_raw ** 2
+        self.loss = self.loss_raw.mean(axis=1)
+        self.loss_mean = self.loss.mean()
+
+
 class MODEL:
     def __init__(self, wbm_obj):
         """
@@ -648,12 +705,12 @@ class MODEL:
         self.cov_list = []
 
         for i in range(len(self.dpgmm_list)):
-            DPGMM = self.dpgmm_list[i]
-            for j, n_defects in enumerate(DPGMM.cntClusterAssignment):
+            dpgmm = self.dpgmm_list[i]
+            for j, n_defects in enumerate(dpgmm.cntClusterAssignment):
                 if n_defects > min_defects:
                     self.cntClusters_list.append(n_defects)
-                    self.mean_list.append(DPGMM.paramClusterMu[j])
-                    self.cov_list.append(DPGMM.paramClusterSigma[j])
+                    self.mean_list.append(dpgmm.paramClusterMu[j])
+                    self.cov_list.append(dpgmm.paramClusterSigma[j])
 
         self.cntClusters_arr = np.array(self.cntClusters_list)
         self.mean_arr = np.array(self.mean_list)
@@ -679,6 +736,29 @@ class MODEL:
         self.ordered_dist_mat, self.res_order, self.res_linkage = compute_serial_matrix(self.skldm,
                                                                                         linkage_method=linkage_method,
                                                                                         optimal=False)
+
+    def get_cg(self, n_cg=9):
+        self.n_cg = n_cg
+        time_cg_start = time.time()
+        self.cg = CG(self.wbm_obj, self.res_linkage, self.mean_arr, self.cov_arr, n_cg=self.n_cg)
+        time_cg_end = time.time()
+        self.runtime_dict[f'runtime_cg_{self.n_cg}'] = np.round(time_cg_end - time_cg_start, 3)
+
+    def get_cg_list(self, max_n_cg=30, plot=True):
+        self.cg_list = []
+        time_cg_list_start = time.time()
+        for i in trange(1, max_n_cg+1):
+            self.cg_list.append(CG(self.wbm_obj, self.res_linkage, self.mean_arr, self.cov_arr, n_cg=i))
+        self.cg_loss_list = [cg.loss_mean for cg in self.cg_list]
+        time_cg_list_end = time.time()
+        self.runtime_dict[f'runtime_cg_list_max_n_cg_{max_n_cg}'] = np.round(time_cg_list_end - time_cg_list_start, 3)
+        if plot:
+            xticks = np.arange(1, max_n_cg+1)
+            fig, axs = plt.subplots(figsize=(15, 4))
+            axs.plot(xticks, self.cg_loss_list, 'bo-')
+            axs.set_xticks(xticks)
+            axs.grid()
+            plt.show()
 
     def plot_skldm(self, vmax=100, save=True, save_format='pdf'):
         """
@@ -712,76 +792,14 @@ class MODEL:
             plt.savefig(fname)
         plt.show()
 
-    def get_cg(self, n_cg=10):
-        """
-        get_cg(self, n_cg=10):
-        """
-        time_cg_start = time.time()
-        self.n_cg = n_cg
-        self.weight_vector_arr = np.zeros((self.wbm_obj.data_len, self.n_cg))
-        self.avg_mean_vec_list = []
-        self.avg_cov_mtx_list = []
-        self.n_members_list = []
-        self.cluster_info = cut_tree(self.res_linkage, self.n_cg).reshape(-1, )
-
-        n_elements = len(self.res_linkage) + 1
-
-        for i in range(self.n_cg):
-            self.n_members_list.append((self.cluster_info == i).sum())
-            self.avg_mean_vec_list.append(
-                self.mean_arr[list(np.arange(n_elements)[(self.cluster_info == i).reshape(-1, )])].mean(axis=0))
-            self.avg_cov_mtx_list.append(
-                self.cov_arr[list(np.arange(n_elements)[(self.cluster_info == i).reshape(-1, )])].mean(axis=0))
-
-        self.avg_mean_vec_list = np.array(self.avg_mean_vec_list)
-        self.avg_cov_mtx_list = np.array(self.avg_cov_mtx_list)
-        # LIKEIHOOD MTX, WEIGHT VECTOR
-        for wbm_id in range(self.wbm_obj.data_len):
-            data = self.wbm_obj.get_polar_points(wbm_id)
-            data_len = len(data)
-            likelihood_mtx = np.zeros((data_len, self.n_cg))
-            for i in range(self.n_cg):
-                likelihood_mtx[:, i] = multivariate_normal.pdf(data, self.avg_mean_vec_list[i],
-                                                               self.avg_cov_mtx_list[i])
-
-            likelihood_mtx /= likelihood_mtx.sum(axis=1).reshape(-1, 1)
-            self.weight_vector_arr[wbm_id] = likelihood_mtx.mean(axis=0)
-
-        time_cg_end = time.time()
-        self.runtime_dict[f'runtime_cg_{self.n_cg}'] = np.round(time_cg_end - time_cg_start, 3)
-
-        # LIKELIHOOD FOR ALL POSITIONS AND MAKE IT AS 'SUM TO ONE'
-        data = self.wbm_obj.tr_valid
-        self.likelihood_all = np.zeros((self.n_cg, len(data)))
-        self.likelihood_all_sum_to_one = np.zeros((self.n_cg, len(data)))
-
-        for i in range(self.n_cg):
-            self.likelihood_all[i] = multivariate_normal.pdf(data,
-                                                             self.avg_mean_vec_list[i],
-                                                             self.avg_cov_mtx_list[i])
-            self.likelihood_all_sum_to_one[i] = self.likelihood_all[i] / self.likelihood_all[i].sum()
-
-        # REPRODUCED MAP
-        self.re_map = self.weight_vector_arr @ self.likelihood_all_sum_to_one
-        self.re_map_scaled = np.zeros((self.wbm_obj.data_len, self.wbm_obj.n_valid))
-
-        for i in range(self.wbm_obj.data_len):
-            self.re_map_scaled[i] = MinMaxScaler().fit_transform(self.re_map[i].reshape(-1, 1)).flatten()
-
-        # MSE LOSS : BETWEEN ORIGINAL WBM vs. RESCALED REPRODUCED MAP
-        self.loss_raw = self.wbm_obj.data_without_nan - self.re_map_scaled
-        self.loss_raw = self.loss_raw ** 2
-        self.loss = self.loss_raw.mean(axis=1)
-        self.loss_mean = self.loss.mean()
-
     def update_sim_mtx_dict_euclidean(self):
         self.sim_mtx_dict = {'EUC': squareform(pdist(self.wbm_obj.data_without_nan))}
 
     def update_sim_mtx_dict_JSD(self):
-        self.sim_mtx_dict = {'JSD': get_JSD_cat_mtx(self.weight_vector_arr)}
+        self.sim_mtx_dict = {'JSD': get_JSD_cat_mtx(self.cg.weight_vector_arr)}
 
     def update_sim_mtx_dict_SKL(self):
-        self.sim_mtx_dict = {'SKL': get_sym_KLD_cat_mtx(self.weight_vector_arr)}
+        self.sim_mtx_dict = {'SKL': get_sym_KLD_cat_mtx(self.cg.weight_vector_arr)}
 
     def plot_cg_mean_cov(self, contour=True, save=True, save_format='pdf'):
 
@@ -799,8 +817,8 @@ class MODEL:
         Z = np.zeros(shape=(len(gridY), len(gridX)), dtype=float)
         fig, axs = plt.subplots(1, self.n_cg, figsize=(self.n_cg * 3, 3))
         for i in range(self.n_cg):
-            selected_mean_arr = self.mean_arr[self.cluster_info == i]
-            selected_cov_arr = self.cov_arr[self.cluster_info == i]
+            selected_mean_arr = self.mean_arr[self.cg.cluster_info == i]
+            selected_cov_arr = self.cov_arr[self.cg.cluster_info == i]
             axs[i].scatter(selected_mean_arr.T[0], selected_mean_arr.T[1], c='b', marker='*')
             axs[i].get_xaxis().set_visible(False)
             axs[i].get_yaxis().set_visible(False)
@@ -838,7 +856,7 @@ class MODEL:
         Z = np.zeros(shape=(len(gridY), len(gridX)), dtype=float)
         fig, axs = plt.subplots(1, self.n_cg, figsize=(self.n_cg * 3, 3))
         for i in range(self.n_cg):
-            selected_mean_arr = self.avg_mean_vec_list[i]
+            selected_mean_arr = self.cg.avg_mean_vec_list[i]
             axs[i].scatter(selected_mean_arr.T[0], selected_mean_arr.T[1], c='b', marker='.')
             axs[i].get_xaxis().set_visible(False)
             axs[i].get_yaxis().set_visible(False)
@@ -847,8 +865,8 @@ class MODEL:
             axs[i].set_ylim(self.wbm_obj.min_r - self.wbm_obj.offset_r,
                             self.wbm_obj.max_r + self.wbm_obj.offset_r)
 
-            mu = self.avg_mean_vec_list[i]
-            cov = self.avg_cov_mtx_list[i]
+            mu = self.cg.avg_mean_vec_list[i]
+            cov = self.cg.avg_cov_mtx_list[i]
             for itr1 in range(len(meshX)):
                 for itr2 in range(len(meshX[itr1])):
                     Z[itr1][itr2] = stats.multivariate_normal.pdf([meshX[itr1][itr2], meshY[itr1][itr2]],
@@ -882,7 +900,7 @@ class MODEL:
                             self.wbm_obj.max_t + self.wbm_obj.offset_t)
             axs[i].set_ylim(self.wbm_obj.min_r - self.wbm_obj.offset_r,
                             self.wbm_obj.max_r + self.wbm_obj.offset_r)
-            rv = multivariate_normal(self.avg_mean_vec_list[i], self.avg_cov_mtx_list[i])
+            rv = multivariate_normal(self.cg.avg_mean_vec_list[i], self.cg.avg_cov_mtx_list[i])
             axs[i].contourf(meshX, meshY, rv.pdf(pos), cmap='binary')
         if save:
             fname = self.wbm_obj.figure_save_folder + f'plot_cg_contourf_avg_mean_cov_{self.n_cg}.{save_format}'
@@ -897,7 +915,7 @@ class MODEL:
 
         fig, axs = plt.subplots(1, self.n_cg, figsize=(self.n_cg * 3, 3), sharex=True, sharey=True)
         for i in range(self.n_cg):
-            selected_mean_arr = self.mean_arr[self.cluster_info == i]
+            selected_mean_arr = self.mean_arr[self.cg.cluster_info == i]
             axs[i].scatter(selected_mean_arr.T[0], selected_mean_arr.T[1], c='b', marker='.')
             axs[i].get_xaxis().set_visible(False)
             axs[i].get_yaxis().set_visible(False)
@@ -925,7 +943,7 @@ class MODEL:
 
         fig, axs = plt.subplots(1, self.n_cg, figsize=(self.n_cg * 3, 3))
         for i in range(self.n_cg):
-            axs[i].scatter(x, y, c=self.likelihood_all_sum_to_one[i], marker='.', cmap='Reds')
+            axs[i].scatter(x, y, c=self.cg.likelihood_all_sum_to_one[i], marker='.', cmap='Reds')
             axs[i].get_xaxis().set_visible(False)
             axs[i].get_yaxis().set_visible(False)
             axs[i].set_facecolor('gray')
@@ -944,7 +962,8 @@ class MODEL:
 
         fig, axs = plt.subplots(1, self.n_cg, figsize=(self.n_cg * 3, 3))
         for i in range(self.n_cg):
-            pdf = multivariate_normal.pdf(self.wbm_obj.tr, mean=self.avg_mean_vec_list[i], cov=self.avg_cov_mtx_list[i])
+            pdf = multivariate_normal.pdf(self.wbm_obj.tr,
+                                          mean=self.cg.avg_mean_vec_list[i], cov=self.cg.avg_cov_mtx_list[i])
             axs[i].get_xaxis().set_visible(False)
             axs[i].get_yaxis().set_visible(False)
             axs[i].imshow(pdf.reshape(self.wbm_obj.map_shape), aspect='auto', interpolation='none', cmap='binary')
@@ -966,7 +985,7 @@ class MODEL:
                 line_color = 'ro-'
             else:
                 line_color = 'bo-'
-            axs.plot(xticks, self.weight_vector_arr[wbm_id], line_color)
+            axs.plot(xticks, self.cg.weight_vector_arr[wbm_id], line_color)
         axs.set_xticks(xticks)
         axs.set_xlabel('cluster group')
         axs.set_ylabel('weight')
