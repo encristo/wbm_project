@@ -230,7 +230,7 @@ class WBM:
         self.map_len = map_shape[0] * map_shape[1]
         self.n_valid = sum(dataset_012[0] != 0)
         self.n_label = len(np.unique(label_list))
-        self.label_name = label_name
+        self.label_name_org = label_name
         self.label_cnt_dict_org = {i: (label_list == i).sum() for i in np.unique(label_list)}
         self.fail_rate_list = (dataset_012 == 2).sum(axis=1).flatten() / self.n_valid
         self.fail_rate_mask_seq = np.arange(self.data_len)[self.fail_rate_list >= fail_rate_limit]
@@ -238,6 +238,7 @@ class WBM:
         self.org_seq = np.arange(self.data_len)[self.fail_rate_mask_seq]
         self.data_len = len(self.data)
         self.label_list = label_list[self.fail_rate_mask_seq]
+        self.label_name = label_name[np.unique(self.label_list)]
         self.label_cnt_dict = {i: (self.label_list == i).sum() for i in np.unique(self.label_list)}
         self.fail_rate_list2 = self.fail_rate_list[self.fail_rate_mask_seq]
 
@@ -248,7 +249,6 @@ class WBM:
         for label in np.unique(self.label_list):
             self.target_wf_list.append(int(np.arange(self.data_len)[self.label_list == label][0]))
         self.n_target_wf = len(self.target_wf_list)
-        # self.target_wf_list = np.array(self.target_wf_list)
         self.result_save_folder = make_sub_folder('results', f'wbm_{self.map_shape}_{self.n_valid}_{self.data_len}')
         self.figure_save_folder = make_sub_folder('results', f'wbm_{self.map_shape}_{self.n_valid}_{self.data_len}',
                                                   'figures')
@@ -268,24 +268,25 @@ class WBM:
         self.x = MinMaxScaler(feature_range=(-1, 1)).fit_transform(x.flatten().reshape(-1, 1))
         self.y = np.flip(MinMaxScaler(feature_range=(-1, 1)).fit_transform(y.flatten().reshape(-1, 1)))
         self.xy = np.hstack((self.x, self.y))
-        self.r = cdist(self.xy, np.array([0, 0]).reshape((1, -1)))
-        self.t_temp = self.x / (self.r + self.epsilon)
-        self.t_temp = np.arccos(self.t_temp) * 180 / math.pi
-        self.t = np.empty_like(self.t_temp)
+        r = cdist(self.xy, np.array([0, 0]).reshape((1, -1)))
+        t_temp = self.x / (r + self.epsilon)
+        t_temp = np.arccos(t_temp) * 180 / math.pi
+        t = np.empty_like(t_temp)
         yidx = self.y >= 0
-        self.t[yidx] = self.t_temp[yidx]
-        self.t[~yidx] = 360 - self.t_temp[~yidx]
-        self.tr = np.zeros((self.map_len, 2))
-        self.tr[:, 0] = self.t.flatten()
-        self.tr[:, 1] = self.r.flatten()
+        t[yidx] = t_temp[yidx]
+        t[~yidx] = 360 - t_temp[~yidx]
+        self.t = MinMaxScaler(feature_range=(0, 1)).fit_transform(t.flatten().reshape(-1, 1))
+        self.r = MinMaxScaler(feature_range=(0, 1)).fit_transform(r.flatten().reshape(-1, 1))
+        self.tr = np.hstack((self.t, self.r))
 
         if norm_factor:
-            self.t = (self.t / self.t[self.sample_zero_one.flatten() != 0].max()) * norm_factor
-            self.r = (self.r / self.r[self.sample_zero_one.flatten() != 0].max()) * norm_factor
-            self.tr[:, 0] = self.t
-            self.tr[:, 1] = self.r
-            self.xy[:, 0] = (self.x / self.x[self.sample_zero_one.flatten() != 0].max()) * norm_factor
-            self.xy[:, 1] = (self.y / self.y[self.sample_zero_one.flatten() != 0].max()) * norm_factor
+            self.t *= norm_factor
+            max_r = self.r[self.sample_zero_one.flatten() != 0].max()
+            self.r *= (norm_factor / max_r)
+            self.tr = np.hstack((self.t, self.r))
+            self.x *= norm_factor
+            self.y *= norm_factor
+            self.xy = np.hstack((self.x, self.y))
 
         self.max_x = self.x[self.sample_zero_one.flatten() != 0].max()
         self.max_y = self.y[self.sample_zero_one.flatten() != 0].max()
@@ -606,12 +607,14 @@ class WBM:
 
 
 class CG:
-    def __init__(self, wbm_obj, res_linkage, mean_arr, cov_arr, n_cg=9):
+    def __init__(self, wbm_obj, res_linkage, mean_arr, cov_arr, points_in_cww_list, n_cg=9):
 
+        self.epsilon = 1e-8
         self.weight_vector_arr = np.zeros((wbm_obj.data_len, n_cg))
         self.avg_mean_vec_list = []
         self.avg_cov_mtx_list = []
         self.n_members_list = []
+        self.overall_points_cg_arr = []
         self.cluster_info = cut_tree(res_linkage, n_cg).reshape(-1, )
 
         n_elements = len(res_linkage) + 1
@@ -621,7 +624,10 @@ class CG:
             self.avg_mean_vec_list.append(
                 mean_arr[list(np.arange(n_elements)[(self.cluster_info == i).reshape(-1, )])].mean(axis=0))
             self.avg_cov_mtx_list.append(
-                cov_arr[list(np.arange(n_elements)[(self.cluster_info == i).reshape(-1, )])].mean(axis=0))
+                cov_arr[list(np.arange(n_elements)
+                             [(self.cluster_info == i).reshape(-1, )])].mean(axis=0) / self.n_members_list[i])
+            self.overall_points_cg_arr = [points_in_cww_list[i] for i, v in enumerate(self.cluster_info) if v == i]
+            self.overall_points_cg_arr = np.vstack(self.overall_points_cg_arr)
 
         self.avg_mean_vec_list = np.array(self.avg_mean_vec_list)
         self.avg_cov_mtx_list = np.array(self.avg_cov_mtx_list)
@@ -636,6 +642,9 @@ class CG:
 
             likelihood_mtx /= likelihood_mtx.sum(axis=1).reshape(-1, 1)
             self.weight_vector_arr[wbm_id] = likelihood_mtx.mean(axis=0)
+            self.weight_vector_arr[wbm_id] += (np.random.rand(n_cg) * self.epsilon)
+            self.weight_vector_arr[wbm_id] /= self.weight_vector_arr[wbm_id].sum()
+
 
         # LIKELIHOOD FOR ALL POSITIONS AND MAKE IT AS 'SUM TO ONE'
         data = wbm_obj.tr_valid
@@ -703,6 +712,7 @@ class MODEL:
         self.cntClusters_list = []
         self.mean_list = []
         self.cov_list = []
+        self.points_in_cww_list = []
 
         for i in range(len(self.dpgmm_list)):
             dpgmm = self.dpgmm_list[i]
@@ -711,6 +721,7 @@ class MODEL:
                     self.cntClusters_list.append(n_defects)
                     self.mean_list.append(dpgmm.paramClusterMu[j])
                     self.cov_list.append(dpgmm.paramClusterSigma[j])
+                    self.points_in_cww_list.append(dpgmm.data[dpgmm.idxClusterAssignment == j])
 
         self.cntClusters_arr = np.array(self.cntClusters_list)
         self.mean_arr = np.array(self.mean_list)
@@ -740,20 +751,25 @@ class MODEL:
     def get_cg(self, n_cg=9):
         self.n_cg = n_cg
         time_cg_start = time.time()
-        self.cg = CG(self.wbm_obj, self.res_linkage, self.mean_arr, self.cov_arr, n_cg=self.n_cg)
+        self.cg = CG(self.wbm_obj,
+                     self.res_linkage,
+                     self.mean_arr,
+                     self.cov_arr,
+                     self.points_in_cww_list,
+                     n_cg=self.n_cg)
         time_cg_end = time.time()
         self.runtime_dict[f'runtime_cg_{self.n_cg}'] = np.round(time_cg_end - time_cg_start, 3)
 
     def get_cg_list(self, max_n_cg=30, plot=True):
         self.cg_list = []
         time_cg_list_start = time.time()
-        for i in trange(1, max_n_cg+1):
+        for i in trange(1, max_n_cg + 1):
             self.cg_list.append(CG(self.wbm_obj, self.res_linkage, self.mean_arr, self.cov_arr, n_cg=i))
         self.cg_loss_list = [cg.loss_mean for cg in self.cg_list]
         time_cg_list_end = time.time()
         self.runtime_dict[f'runtime_cg_list_max_n_cg_{max_n_cg}'] = np.round(time_cg_list_end - time_cg_list_start, 3)
         if plot:
-            xticks = np.arange(1, max_n_cg+1)
+            xticks = np.arange(1, max_n_cg + 1)
             fig, axs = plt.subplots(figsize=(15, 4))
             axs.plot(xticks, self.cg_loss_list, 'bo-')
             axs.set_xticks(xticks)
@@ -1005,7 +1021,7 @@ class MODEL:
         fpr = []
         pi = []
         specificity_list = []
-        for end_rank in range(rank_interval, self.wbm_obj.data_len, rank_interval):
+        for end_rank in range(0, self.wbm_obj.data_len, rank_interval):
             pred_boolean = np.zeros(self.wbm_obj.data_len)
             pred_boolean[:end_rank + 1] = 1
             pred_boolean = pred_boolean == 1

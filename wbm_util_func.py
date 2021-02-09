@@ -74,7 +74,7 @@ def get_SKLDM(mean_list, cov_list):
 
 def KLD_cat(p, q):
     epsilon = 1e-8
-    return (p * np.log(p / (q+epsilon))).sum()
+    return (p * np.log(p / q)).sum()
 
 
 def get_KLD_cat_mtx(wv):
@@ -110,15 +110,18 @@ def JSD(p, q):
     return 0.5 * KLD_cat(p, m) + 0.5 * KLD_cat(q, m)
 
 
-def get_JSD_cat_mtx(wv):
-    data_len = len(wv)
+def get_JSD_cat_mtx(wv_arr):
+    data_len = len(wv_arr)
     JSD_cat = np.zeros((data_len, data_len))
 
     for i in range(data_len):
-        p = wv[i]
+        p = wv_arr[i]
         for j in range(data_len):
-            q = wv[j]
-            JSD_cat[i][j] = JSD(p, q)
+            q = wv_arr[j]
+            if i == j:
+                JSD_cat[i][j] = 0
+            else:
+                JSD_cat[i][j] = JSD(p, q)
     return JSD_cat
 
 
@@ -226,7 +229,7 @@ def get_similarity_WMHD(model_obj, target_wf_list, weight_type='type_2', m=1, s_
         runtime_wmhd = model_obj.runtime_dict['runtime_wmhd_'+param_str_key]
         fname_time = f'runtime_total_WMHD_{weight_type}_{m}_{s_out_rate}_{runtime_wmhd}.csv'
         fname_time = model_obj.wbm_obj.result_save_folder + fname_time
-        np.savetxt(fname_time, np.array([model_obj.runtime_total_WMHD]))
+        np.savetxt(fname_time, np.array([runtime_wmhd]))
         print(f'runtime_WMHD (weight_type: {weight_type} m:{m} s_out_rate: {s_out_rate}) {runtime_wmhd}')
 
 

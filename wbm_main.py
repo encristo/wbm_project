@@ -8,20 +8,13 @@ my_label_raw = np.loadtxt('./dataset/private_dataset_label.csv', delimiter=',', 
 # shape (160, 968): 원래 dataset 에서 모양이 애매한 wafer 들 (label : 99 로 표기) 제외, 160 개 wafer 를 가져옴
 private_label = my_label_raw[my_label_raw != 99]
 private_wbmdata = my_wbm_raw[my_label_raw != 99]
-private_label_map_type_list = ['C+R', 'Left_Top', 'Center', 'L+R', 'Edge', 'Donut', 'Random']
-
-# PUBLIC DATASET LOAD : MAP SHAPE : (26, 26) 'none' type 은 제외
-infile = open('./dataset/wm811k_dataset', 'rb')
-wm811k_dataset = pickle.load(infile, encoding='latin1')
-wm811k_2626 = WM811K(wm811k_dataset,
-                     map_shape=(26, 26), n_valid=533, label_count_lim=5, map_type_exclude=['none'], verbose=False)
-wbm_2626 = WBM(wm811k_2626.data, wm811k_2626.label_list, wm811k_2626.map_type_list, (26, 26))
+private_label_map_type_list = np.array(['C+R', 'Left_Top', 'Center', 'L+R', 'Edge', 'Donut', 'Random'])
 
 if __name__ == '__main__':
     wbm_2244 = WBM(private_wbmdata,
                    private_label,
                    private_label_map_type_list,
-                   map_shape=(22, 44), fail_rate_limit=0.01)
+                   map_shape=(22, 44), fail_rate_limit=0.01, norm_factor=10)
     model_2244 = MODEL(wbm_2244)
 
     get_similarity_euclidean(model_2244, model_2244.wbm_obj.target_wf_list)
