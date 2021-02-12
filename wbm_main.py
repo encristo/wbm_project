@@ -19,7 +19,6 @@ if __name__ == '__main__':
 
     get_similarity_euclidean(model_2244, model_2244.wbm_obj.target_wf_list)
     get_similarity_JSD(model_2244, model_2244.wbm_obj.target_wf_list)
-    get_similarity_SKL(model_2244, model_2244.wbm_obj.target_wf_list)
     model_2244.update_dict_sim_score()
     get_similarity_WMHD(model_2244, [0], weight_type='type_2', m=1, s_out_rate=0.1)
     model_2244.update_dict_sim_score()

@@ -11,6 +11,8 @@ from scipy.stats import multivariate_normal
 from sklearn.preprocessing import MinMaxScaler
 from scipy.spatial.distance import euclidean, squareform, cdist, pdist
 from sklearn.metrics import confusion_matrix, auc
+from sklearn.covariance import empirical_covariance
+from numpy.random import multivariate_normal as mvn
 
 
 class DPGMM:
@@ -380,7 +382,6 @@ class WBM:
         n_args = len(args)
         fig, axs = plt.subplots(1, n_args, figsize=(n_args * 3, 3))
         for i, wbm_id in enumerate(args):
-            print(i)
             axs[i].imshow(self.data_with_nan[wbm_id].reshape(self.map_shape), aspect='auto', interpolation='none',
                           cmap='binary')
             axs[i].set_facecolor('gray')
@@ -470,7 +471,7 @@ class WBM:
                 avg_map = (self.data_with_nan[self.label_list == v]).mean(axis=0)
                 axs[i].imshow(avg_map.reshape(self.map_shape), aspect='auto', interpolation='none', cmap='binary')
                 if title:
-                    axs[i].set_title(f'{self.label_name[v]}, {(self.label_list == v).sum()}ea')
+                    axs[i].set_title(f'{self.label_name[i]}, {(self.label_list == v).sum()}ea')
         if save:
             fname = self.figure_save_folder + f'plot_class_average_map.{save_format}'
             fig.savefig(fname)
@@ -607,30 +608,59 @@ class WBM:
 
 
 class CG:
-    def __init__(self, wbm_obj, res_linkage, mean_arr, cov_arr, points_in_cww_list, n_cg=9):
+    def __init__(self,
+                 wbm_obj,
+                 res_linkage,
+                 mean_arr,
+                 cov_arr,
+                 points_in_cww_list,
+                 cov_type='real',
+                 n_cg=9):
 
         self.epsilon = 1e-8
         self.weight_vector_arr = np.zeros((wbm_obj.data_len, n_cg))
         self.avg_mean_vec_list = []
         self.avg_cov_mtx_list = []
         self.n_members_list = []
-        self.overall_points_cg_arr = []
+        self.overall_points_in_cg_list = []
         self.cluster_info = cut_tree(res_linkage, n_cg).reshape(-1, )
 
         n_elements = len(res_linkage) + 1
 
-        for i in range(n_cg):
-            self.n_members_list.append((self.cluster_info == i).sum())
-            self.avg_mean_vec_list.append(
-                mean_arr[list(np.arange(n_elements)[(self.cluster_info == i).reshape(-1, )])].mean(axis=0))
-            self.avg_cov_mtx_list.append(
-                cov_arr[list(np.arange(n_elements)
-                             [(self.cluster_info == i).reshape(-1, )])].mean(axis=0) / self.n_members_list[i])
-            self.overall_points_cg_arr = [points_in_cww_list[i] for i, v in enumerate(self.cluster_info) if v == i]
-            self.overall_points_cg_arr = np.vstack(self.overall_points_cg_arr)
+        if cov_type == 'average':
+            for i in range(n_cg):
+                self.n_members_list.append((self.cluster_info == i).sum())
+                self.avg_mean_vec_list.append(
+                    mean_arr[list(np.arange(n_elements)[(self.cluster_info == i).reshape(-1, )])].mean(axis=0))
+                self.avg_cov_mtx_list.append(
+                    cov_arr[list(np.arange(n_elements)[(self.cluster_info == i).reshape(-1, )])].mean(axis=0))
 
-        self.avg_mean_vec_list = np.array(self.avg_mean_vec_list)
-        self.avg_cov_mtx_list = np.array(self.avg_cov_mtx_list)
+            self.avg_mean_vec_list = np.array(self.avg_mean_vec_list)
+            self.avg_cov_mtx_list = np.array(self.avg_cov_mtx_list)
+
+        elif cov_type == 'real':
+            for i in range(n_cg):
+                self.n_members_list.append((self.cluster_info == i).sum())
+                overall_points_in_cg = [points_in_cww_list[cww] for cww, v in enumerate(self.cluster_info) if v == i]
+                overall_points_in_cg = np.vstack(overall_points_in_cg)
+                self.avg_mean_vec_list.append(overall_points_in_cg.mean(axis=0))
+                self.avg_cov_mtx_list.append(empirical_covariance(overall_points_in_cg))
+
+        else:  # cov_type == 'sample'
+            for i in range(n_cg):
+                selected_cg_idx = self.cluster_info == i
+                n_CwW_in_cg = selected_cg_idx.sum()
+                self.n_members_list.append(n_CwW_in_cg)
+                mean_list_temp = mean_arr[selected_cg_idx].tolist()
+                cov_list_temp = cov_arr[selected_cg_idx].tolist()
+                sample_points_in_cg = [mvn(mean_list_temp[j], cov_list_temp[j], size=100) for j in range(n_CwW_in_cg)]
+                sample_points_in_cg = np.vstack(sample_points_in_cg)
+                self.avg_mean_vec_list.append(sample_points_in_cg.mean(axis=0))
+                self.avg_cov_mtx_list.append(empirical_covariance(sample_points_in_cg))
+
+            self.avg_mean_vec_list = np.array(self.avg_mean_vec_list)
+            self.avg_cov_mtx_list = np.array(self.avg_cov_mtx_list)
+
         # LIKEIHOOD MTX, WEIGHT VECTOR
         for wbm_id in range(wbm_obj.data_len):
             data = wbm_obj.get_polar_points(wbm_id)
@@ -644,7 +674,6 @@ class CG:
             self.weight_vector_arr[wbm_id] = likelihood_mtx.mean(axis=0)
             self.weight_vector_arr[wbm_id] += (np.random.rand(n_cg) * self.epsilon)
             self.weight_vector_arr[wbm_id] /= self.weight_vector_arr[wbm_id].sum()
-
 
         # LIKELIHOOD FOR ALL POSITIONS AND MAKE IT AS 'SUM TO ONE'
         data = wbm_obj.tr_valid
@@ -690,7 +719,7 @@ class MODEL:
             self.dpgmm_loaded = True
             infile = open(self.wbm_obj.result_save_folder + self.fname_dpgmm_list, 'rb')
             self.dpgmm_list = pickle.load(infile, encoding='latin1')
-            print('dpgmm_list has been loaded from data.')
+
         else:
             self.dpgmm_loaded = False
             time_dpgmm_start = time.time()
@@ -716,12 +745,13 @@ class MODEL:
 
         for i in range(len(self.dpgmm_list)):
             dpgmm = self.dpgmm_list[i]
+            cww_id = np.unique(dpgmm.idxClusterAssignment)
             for j, n_defects in enumerate(dpgmm.cntClusterAssignment):
                 if n_defects > min_defects:
                     self.cntClusters_list.append(n_defects)
                     self.mean_list.append(dpgmm.paramClusterMu[j])
                     self.cov_list.append(dpgmm.paramClusterSigma[j])
-                    self.points_in_cww_list.append(dpgmm.data[dpgmm.idxClusterAssignment == j])
+                    self.points_in_cww_list.append(dpgmm.data[dpgmm.idxClusterAssignment == cww_id[j]])
 
         self.cntClusters_arr = np.array(self.cntClusters_list)
         self.mean_arr = np.array(self.mean_list)
@@ -732,7 +762,7 @@ class MODEL:
             self.skldm_loaded = True
             infile = open(self.wbm_obj.result_save_folder + self.fname_skldm, 'rb')
             self.skldm = pickle.load(infile, encoding='latin1')
-            print('skldm has been loaded from data.')
+
         else:
             self.skldm_loaded = False
             time_skldm_start = time.time()
@@ -748,7 +778,7 @@ class MODEL:
                                                                                         linkage_method=linkage_method,
                                                                                         optimal=False)
 
-    def get_cg(self, n_cg=9):
+    def get_cg(self, n_cg=9, cov_type='real'):
         self.n_cg = n_cg
         time_cg_start = time.time()
         self.cg = CG(self.wbm_obj,
@@ -756,15 +786,22 @@ class MODEL:
                      self.mean_arr,
                      self.cov_arr,
                      self.points_in_cww_list,
+                     cov_type=cov_type,
                      n_cg=self.n_cg)
         time_cg_end = time.time()
         self.runtime_dict[f'runtime_cg_{self.n_cg}'] = np.round(time_cg_end - time_cg_start, 3)
 
-    def get_cg_list(self, max_n_cg=30, plot=True):
+    def get_cg_list(self, max_n_cg=30, cov_type='real', plot=True):
         self.cg_list = []
         time_cg_list_start = time.time()
         for i in trange(1, max_n_cg + 1):
-            self.cg_list.append(CG(self.wbm_obj, self.res_linkage, self.mean_arr, self.cov_arr, n_cg=i))
+            self.cg_list.append(CG(self.wbm_obj,
+                                   self.res_linkage,
+                                   self.mean_arr,
+                                   self.cov_arr,
+                                   self.points_in_cww_list,
+                                   cov_type=cov_type,
+                                   n_cg=i))
         self.cg_loss_list = [cg.loss_mean for cg in self.cg_list]
         time_cg_list_end = time.time()
         self.runtime_dict[f'runtime_cg_list_max_n_cg_{max_n_cg}'] = np.round(time_cg_list_end - time_cg_list_start, 3)
@@ -775,6 +812,7 @@ class MODEL:
             axs.set_xticks(xticks)
             axs.grid()
             plt.show()
+        return self.cg_loss_list
 
     def plot_skldm(self, vmax=100, save=True, save_format='pdf'):
         """
@@ -1223,7 +1261,6 @@ class WM811K:
         self.ex_mask *= wm811k_dataset_obj.glob_label_count_list > label_count_lim
         self.ex_mask = self.ex_mask == 1
         self.seq_mask = self.seq[self.ex_mask]
-        print(len(self.seq_mask))
 
         self.data = []
         glob_counter = 0
@@ -1310,7 +1347,3 @@ class WM811K:
                 startangle=90)
         axs.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
         plt.show()
-
-# def print_sim_score(target_wf_list, sim_score_dict):
-#     for sim_method in sim_score_dict.keys():
-#         sim_score_dict[sim_method]
