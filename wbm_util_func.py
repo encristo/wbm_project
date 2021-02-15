@@ -3,6 +3,7 @@ import scipy.linalg as linalg
 import os
 import pickle
 import time
+import sys
 import matplotlib.pyplot as plt
 import scipy.stats as stats
 import wbm_class
@@ -73,7 +74,6 @@ def get_SKLDM(mean_list, cov_list):
 
 
 def KLD_cat(p, q):
-    epsilon = 1e-8
     return (p * np.log(p / q)).sum()
 
 
@@ -184,22 +184,22 @@ def get_similarity_euclidean(model_obj, target_wf_list):
     print(f'runtime_EUC : {time_EUC}')
 
 
-def get_similarity_JSD(model_obj, target_wf_list, n_cg=9, linkage_method='complete'):
+def get_similarity_JSD(model_obj, target_wf_list, n_cg=9, cov_type='real', linkage_method='complete'):
     model_obj.get_dpgmm()
     model_obj.get_skldm(linkage_method=linkage_method)
-    model_obj.get_cg(n_cg=n_cg)
+    model_obj.get_cg(n_cg=n_cg, cov_type=cov_type)
     time_start = time.time()
     model_obj.update_dict_sim_val(target_wf_list, sim_method='JSD')
     time_end = time.time()
 
-    if not model_obj.dpgmm_loaded:
+    if not model_obj.load_check_dpgmm:
         time_JSD = np.round(time_end - time_start
                             + model_obj.runtime_dict['runtime_dpgmm']
                             + model_obj.runtime_dict['runtime_skldm']
                             + model_obj.runtime_dict[f'runtime_cg_{n_cg}'], 3)
         model_obj.runtime_dict[f'runtime_JSD_nCG_{n_cg}'] = time_JSD
-        # fname_time = model_obj.wbm_obj.result_save_folder + f'runtime_total_JSD_{model_obj.runtime_total_JSD}.csv'
-        # np.savetxt(fname_time, np.array([model_obj.runtime_total_JSD]))
+        fname_time = model_obj.wbm_obj.save_folder_runtime + f'runtime_JSD_{n_cg}_{time_JSD}.csv'
+        np.savetxt(fname_time, np.array([model_obj.runtime_total_JSD]))
         print(f'runtime_JSD : {time_JSD}')
 
 
@@ -211,7 +211,7 @@ def get_similarity_SKL(model_obj, target_wf_list, n_cg=9, linkage_method='comple
     model_obj.update_dict_sim_val(target_wf_list, sim_method='SKL')
     time_end = time.time()
 
-    if not model_obj.dpgmm_loaded:
+    if not model_obj.load_check_dpgmm:
         time_SKL = np.round(time_end - time_start
                             + model_obj.runtime_dict['runtime_dpgmm']
                             + model_obj.runtime_dict['runtime_skldm']
@@ -225,10 +225,10 @@ def get_similarity_WMHD(model_obj, target_wf_list, weight_type='type_2', m=1, s_
     model_obj.update_dict_sim_val(target_wf_list,
                                   sim_method='WMH',
                                   weight_type=weight_type, m=m, s_out_rate=s_out_rate)
-    if not model_obj.wmhd_loaded:
+    if not model_obj.load_check_wmhd:
         runtime_wmhd = model_obj.runtime_dict['runtime_wmhd_'+param_str_key]
-        fname_time = f'runtime_total_WMHD_{weight_type}_{m}_{s_out_rate}_{runtime_wmhd}.csv'
-        fname_time = model_obj.wbm_obj.result_save_folder + fname_time
+        fname_time = f'runtime_WMHD_{weight_type}_{m}_{s_out_rate}_{runtime_wmhd}.csv'
+        fname_time = model_obj.wbm_obj.save_folder_runtime + fname_time
         np.savetxt(fname_time, np.array([runtime_wmhd]))
         print(f'runtime_WMHD (weight_type: {weight_type} m:{m} s_out_rate: {s_out_rate}) {runtime_wmhd}')
 
@@ -337,8 +337,8 @@ def plotPoints(data, affiliation, means, covs, delta=1, numLine=3):
 
 def plot_dpgmm_xy_tr_example(wbm_id, wbm_obj, contour=True, figsize=(18, 3), save=True, save_format='svg'):
     fig, axs = plt.subplots(1, 6, figsize=figsize)
-    dpgmm_xy = wbm_class.DPGMM(wbm_id=wbm_id, wbm_obj=wbm_obj, coordinate='xy')
-    dpgmm_tr = wbm_class.DPGMM(wbm_id=wbm_id, wbm_obj=wbm_obj, coordinate='polar')
+    dpgmm_xy = wbm_class.DPGMM_VI(wbm_id=wbm_id, wbm_obj=wbm_obj, coordinate='xy')
+    dpgmm_tr = wbm_class.DPGMM_VI(wbm_id=wbm_id, wbm_obj=wbm_obj, coordinate='polar')
     dpgmm_xy.fit_dpgmm()
     dpgmm_tr.fit_dpgmm()
 
@@ -415,6 +415,14 @@ def plot_dpgmm_xy_tr_example(wbm_id, wbm_obj, contour=True, figsize=(18, 3), sav
                                                                       mean=mu, cov=cov)
                 axs[4].contour(meshX, meshY, Z, 1, colors='k', linewidths=1)
     if save:
-        fname = wbm_obj.figure_save_folder + f'plot_dpgmm_xy_tr_example_wf_{wbm_id}.{save_format}'
+        fname = wbm_obj.save_folder_figures + f'plot_dpgmm_xy_tr_example_wf_{wbm_id}.{save_format}'
         fig.savefig(fname)
     plt.show()
+
+
+def sampleFromDistribution(dist):
+    draw = np.random.rand()
+    for itr in range(len(dist) - 1):
+        if draw < dist[itr]:
+            return itr
+    return len(dist) - 1
