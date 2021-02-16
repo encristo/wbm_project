@@ -15,6 +15,424 @@ from sklearn.covariance import empirical_covariance
 from numpy.random import multivariate_normal as mvn
 
 
+class WM811K_DATASET:
+    def __init__(self, verbose=False):
+        data_dir = 'D:/ML/other_works/WaPIRL-main/data/wm811k/labeled/train'
+        self.map_type_list = os.listdir(data_dir)
+        self.glob_shape_valid_list = []
+        self.glob_shape_list = []
+        self.glob_valid_list = []
+        self.glob_map_type_list = []
+        self.glob_map_label_list = []
+        self.glob_fail_rate_list = []
+        self.map_type_dict = {}
+
+        for i, map_type in enumerate(self.map_type_list):
+            png_list = os.listdir(os.path.join(data_dir, map_type))
+            shape_list = []
+
+            for file in tqdm(png_list, desc=f'{map_type}'):
+                png_path = os.path.join(data_dir, map_type, file)
+                image = np.array(Image.open(png_path))
+                image_valid = (image != 0).sum()
+                self.glob_fail_rate_list.append(np.round((image == 255).sum() / image_valid, 4))
+                self.glob_shape_list.append(image.shape)
+                self.glob_valid_list.append(image_valid)
+                self.glob_map_type_list.append(map_type)
+                self.glob_map_label_list.append(i)
+                shape_valid = (image.shape[0], image.shape[1], image_valid)
+                shape_list.append(shape_valid)
+                self.glob_shape_valid_list.append(shape_valid)
+
+                if verbose:
+                    print(f'{map_type} / {file} / {shape_valid}')
+            self.map_type_dict[map_type] = Counter(shape_list).most_common()
+
+        self.glob_shape_counter = Counter(self.glob_shape_valid_list).most_common()
+
+        self.map_type_list = np.array(self.map_type_list)
+        self.glob_shape_valid_list = np.array(self.glob_shape_valid_list)
+        self.glob_shape_list = np.array(self.glob_shape_list)
+        self.glob_valid_list = np.array(self.glob_valid_list)
+        self.glob_map_type_list = np.array(self.glob_map_type_list)
+        self.glob_map_label_list = np.array(self.glob_map_label_list)
+        self.glob_fail_rate_list = np.array(self.glob_fail_rate_list)
+
+        self.glob_label_count_list = np.zeros_like(self.glob_map_label_list)
+        for i, v in enumerate(self.glob_shape_counter):
+            shape_valid_mask = ((self.glob_shape_valid_list == v[0]).sum(axis=1) == 3).flatten()
+            local_label_list = self.glob_map_label_list[shape_valid_mask]
+            for label in np.unique(local_label_list):
+                label_mask = self.glob_map_label_list == label
+                shape_valid_label_mask = shape_valid_mask * label_mask == 1
+                label_count = shape_valid_label_mask.sum()
+                self.glob_label_count_list[shape_valid_label_mask] = label_count
+
+
+class WM811K:
+    def __init__(self, wm811k_dataset_obj, map_shape, n_valid, label_count_lim=10, map_type_exclude='none',
+                 verbose=True):
+        data_dir = 'D:/ML/other_works/WaPIRL-main/data/wm811k/labeled/train'
+        self.map_shape = map_shape
+        self.n_valid = n_valid
+        self.label_count_lim = label_count_lim
+        self.map_type_list = wm811k_dataset_obj.map_type_list  # center, donut, edge-loc, edge-ring, loc, near-full, none, random, scratch 9개
+        self.seq = np.arange(len(wm811k_dataset_obj.glob_fail_rate_list))
+        self.ex_mask = np.ones((len(wm811k_dataset_obj.glob_fail_rate_list)))
+        for ex_map_type in map_type_exclude:
+            ex_label = np.argmax(wm811k_dataset_obj.map_type_list == ex_map_type)
+            boolean_arr = wm811k_dataset_obj.glob_map_label_list != ex_label
+            self.ex_mask = self.ex_mask * boolean_arr
+        self.ex_mask *= ((wm811k_dataset_obj.glob_shape_list == map_shape).sum(axis=1) == 2)
+        self.ex_mask *= wm811k_dataset_obj.glob_valid_list == n_valid
+        self.ex_mask *= wm811k_dataset_obj.glob_label_count_list > label_count_lim
+        self.ex_mask = self.ex_mask == 1
+        self.seq_mask = self.seq[self.ex_mask]
+
+        self.data = []
+        glob_counter = 0
+        match_counter = 0
+        match_seq = self.seq_mask[match_counter]
+
+        for i, map_type in enumerate(self.map_type_list):
+            png_list = os.listdir(os.path.join(data_dir, map_type))
+
+            for file in png_list:
+                if glob_counter == match_seq:
+                    png_path = os.path.join(data_dir, map_type, file)
+                    image = np.array(Image.open(png_path))
+                    self.data.append(image.flatten())
+                    if verbose:
+                        print(
+                            f'map_type:{map_type}, glob_counter:{glob_counter}, match_counter:{match_counter}, match_seq:{self.seq_mask[match_counter]}')
+                    if match_counter != len(self.seq_mask) - 1:
+                        match_counter += 1
+                        match_seq = self.seq_mask[match_counter]
+                glob_counter += 1
+
+        self.data = np.array(self.data)
+        self.data[self.data == 127] = 1
+        self.data[self.data == 255] = 2
+        self.data_len = len(self.data)
+        self.fail_rate_list = wm811k_dataset_obj.glob_fail_rate_list[self.seq_mask]
+        self.label_list = wm811k_dataset_obj.glob_map_label_list[self.seq_mask]
+
+        self.label_count_dict = {k: (self.label_list == k).sum() for k in range(len(self.map_type_list))}
+
+    def plot_failrate_boxplot(self):
+        fail_rate_arr = [self.fail_rate_list[self.label_list == i] for i in np.unique(self.label_list)]
+        map_type_label = self.map_type_list[np.unique(self.label_list)]
+        plt.figure(figsize=(8, 5))
+        plt.boxplot(fail_rate_arr, labels=map_type_label)
+        plt.ylim(0, 1)
+        plt.show()
+
+    def plot_sample_9_imgs(self):
+        fig, axs = plt.subplots(1, 9, figsize=(20, 2))
+        fig.suptitle(self.map_shape, y=1.1)
+        for i in range(9):
+            axs[i].axis('off')
+        for i, label_count in enumerate(self.label_count_dict.values()):
+            axs[i].set_title(self.map_type_list[i])
+            if label_count != 0:
+                sample_id = int(np.random.choice(np.arange(self.data_len)[self.label_list == i], 1))
+                axs[i].imshow(self.data[sample_id].reshape(self.map_shape), aspect='auto', interpolation='none')
+
+        plt.show()
+
+    def plot_avg_map(self):
+        fig, axs = plt.subplots(1, 9, figsize=(20, 2))
+        fig.suptitle(self.map_shape, y=1.1)
+        for i, label_count in enumerate(self.label_count_dict.values()):
+            axs[i].set_title(self.map_type_list[i])
+            axs[i].axis('off')
+            if label_count != 0:
+                avg_map = np.array(self.data[self.label_list == i], dtype='float')
+                avg_map[avg_map == 0] = np.nan
+                avg_map[avg_map == 1] = 0
+                avg_map[avg_map == 2] = 1
+                axs[i].imshow(avg_map.mean(axis=0).reshape(self.map_shape), aspect='auto', interpolation='none')
+        plt.show()
+
+    def plot_sample_9xn_imgs(self):
+        n_cols = self.label_count_lim - 1
+        fig, axs = plt.subplots(9, n_cols, figsize=(20, 20))
+        for i in range(9):
+            for j in range(n_cols):
+                axs[i, j].axis('off')
+        for i, label_count in enumerate(self.label_count_dict.values()):
+            axs[i, 0].set_title(self.map_type_list[i])
+            if label_count != 0:
+                sample_id_arr = np.random.choice(np.arange(self.data_len)[self.label_list == i], n_cols, replace=False)
+                for j, sample_id in enumerate(sample_id_arr):
+                    axs[i][j].imshow(self.data[sample_id].reshape(self.map_shape), aspect='auto', interpolation='none')
+        plt.show()
+
+    def plot_piechart(self):
+        fig, axs = plt.subplots(figsize=(6, 6))
+        axs.pie(self.label_count_dict.values(), labels=self.map_type_list, autopct='%1.1f%%', shadow=True,
+                startangle=90)
+        axs.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
+        plt.show()
+
+
+class DPGMM_MC:
+
+    def __init__(self, wbm_id, wbm_obj, coordinate='polar'):
+        self.wbm_id = wbm_id
+        self.wbm_obj = wbm_obj
+        self.target_label = self.wbm_obj.label_list[self.wbm_id]
+        if coordinate == 'polar':
+            self.data = self.wbm_obj.get_polar_points(self.wbm_id)
+        else:
+            self.data = self.wbm_obj.get_xy_points(self.wbm_id)
+        self.data_xy = self.wbm_obj.get_xy_points(self.wbm_id)
+
+        self.cntData = len(self.data)
+        self.max_t = self.wbm_obj.max_t
+        self.max_r = self.wbm_obj.max_r
+        self.max_x = self.wbm_obj.max_x
+        self.max_y = self.wbm_obj.max_y
+        self.min_t = self.wbm_obj.min_t
+        self.min_r = self.wbm_obj.min_r
+        self.min_x = self.wbm_obj.min_x
+        self.min_y = self.wbm_obj.min_y
+        self.offset_t = self.wbm_obj.offset_t
+        self.offset_r = self.wbm_obj.offset_r
+        self.offset_x = self.wbm_obj.offset_x
+        self.offset_y = self.wbm_obj.offset_y
+
+        self.cntClusters_list_over_iter = []
+        self.setClusterAssignment = []  # 각 cluster 의 assign 된 data 의 index 를 저장
+        self.paramClusterSigma = []  # 각 cluster 의 sigma parameter 를 저장
+        self.paramClusterMu = []  # 각 cluster 의 mu parameter 를 저장
+        self.cntClusterAssignment = []  # 각 cluster 에 assign 된 data 개수를 counting
+
+    def cluster(self,
+                gamma=0.001,
+                itr=10,
+                cov_1=1,
+                cov_2=10,
+                visualize=False,
+                printOut=False,
+                tqdm_on=False,
+                save_plot=False,
+                truncate=sys.maxsize):
+        self.save_folder_dpgmm_mc = make_sub_folder(self.wbm_obj.save_folder_figures,
+                                                    'dpgmm_mc', f'gamma_{gamma}', f'wbm_id_{self.wbm_id}')
+        self.gamma = gamma  # gamma 값을 저장
+        self.cntClusters = 0  # cluster 의 개수
+        self.idxClusterAssignment = np.zeros(self.cntData, dtype=int) - 1  # 각 data 의 assign 된 cluster index 를 저장 및 초기화
+
+        if tqdm_on:
+            itr_range = trange(itr)
+        else:
+            itr_range = range(itr)
+
+        for i in itr_range:  # while sampling iteration
+            for idx in range(self.cntData):  # while each data instance in the dataset
+                # instance 의 현재 assignment 지워주기, 맨처음 iteration 에서는 건너 뜀. (cluster idx = -1)
+                if self.idxClusterAssignment[idx] != -1:
+                    self.cntClusterAssignment[self.idxClusterAssignment[idx]] = \
+                        self.cntClusterAssignment[self.idxClusterAssignment[idx]] - 1
+                    self.setClusterAssignment[self.idxClusterAssignment[idx]].remove(idx)
+                    if self.cntClusterAssignment[self.idxClusterAssignment[idx]] == 0:  # 빈 cluster 일 경우 cluster 제거
+                        self.removeEmptyCluster(self.idxClusterAssignment[idx])
+                    self.idxClusterAssignment[idx] = -1
+
+                # prior 값 계산
+                normalize = 0.0
+                prior = []
+                for itrCluster in range(self.cntClusters):  # 현재 cluster 갯수만큼 iteration 진행
+                    prior.append(self.cntClusterAssignment[itrCluster])
+                    normalize += self.cntClusterAssignment[itrCluster]
+                if self.cntClusters < truncate:  # cluster 개수의 상계(upper limit)를 초과하지 않은 경우
+                    prior.append(self.gamma)
+                    normalize += self.gamma
+                for itrCluster in range(len(prior)):
+                    prior[itrCluster] /= normalize
+
+                # posterior 값 계산 과정. posterior = prior * likelihood
+                instance = self.data[idx]
+                posterior = []
+                for itrCluster in range(self.cntClusters):
+                    likelihood = stats.multivariate_normal(self.paramClusterMu[itrCluster],
+                                                           self.paramClusterSigma[itrCluster]).pdf(instance)
+
+                    posterior.append(prior[itrCluster] * likelihood)
+                if self.cntClusters < truncate:
+                    posterior.append(prior[len(prior) - 1] * 1.0)
+                normalize = 0.0
+                for itrCluster in range(len(posterior)):
+                    normalize = normalize + posterior[itrCluster]
+                for itrCluster in range(len(posterior)):
+                    posterior[itrCluster] = posterior[itrCluster] / normalize  # 위에서 계산한 값으로 normalizing
+                idxSampledCluster = sampleFromDistribution(posterior)
+
+                # parameter mu, sigma 업데이트
+                if idxSampledCluster != self.cntClusters:  # 현재 instance 가 기존 cluster 로 assign 되었을 때
+                    self.idxClusterAssignment[idx] = int(idxSampledCluster)
+                    self.setClusterAssignment[idxSampledCluster].append(idx)
+                    self.cntClusterAssignment[idxSampledCluster] = self.cntClusterAssignment[idxSampledCluster] + 1
+                    dataComponent = np.ndarray(
+                        shape=(len(self.setClusterAssignment[idxSampledCluster]), len(self.data[0])),
+                        dtype=np.float32)
+                    for idxComponentSample in range(len(self.setClusterAssignment[idxSampledCluster])):
+                        dataComponentInstance = self.data[
+                            self.setClusterAssignment[idxSampledCluster][idxComponentSample]]
+                        for idxDimension in range(len(dataComponentInstance)):
+                            dataComponent[idxComponentSample][idxDimension] = dataComponentInstance[idxDimension]
+                    self.paramClusterMu[idxSampledCluster] = np.mean(dataComponent, axis=0).tolist()
+                    self.paramClusterSigma[idxSampledCluster] = (
+                            np.cov(dataComponent.T) + np.identity(len(instance)) * cov_1 /
+                            self.cntClusterAssignment[idxSampledCluster]).tolist()
+                else:  # 현재 instance 가 새 cluster 로 assign 되었을 때
+                    self.idxClusterAssignment[idx] = int(idxSampledCluster)
+                    self.cntClusters = self.cntClusters + 1
+                    self.setClusterAssignment.append([idx])
+                    self.cntClusterAssignment.append(1)
+                    self.paramClusterMu.append([])
+                    self.paramClusterSigma.append([])
+                    self.paramClusterMu[idxSampledCluster] = instance.tolist()
+                    self.paramClusterSigma[idxSampledCluster] = (np.identity(len(instance)) * cov_2).tolist()
+
+            self.cntClusters_list_over_iter.append(self.cntClusters)
+            # visualization
+            if printOut:
+                print('#####################################################')
+                print('Iteration ', i + 1)
+                print('#####################################################')
+                self.printOut()
+            if visualize:
+                self.plot_iter(itr=i, save=save_plot)
+                # plotPoints(self.data, self.idxClusterAssignment, self.paramClusterMu, self.paramClusterSigma, numLine=1)
+        self.paramClusterMu = np.vstack(self.paramClusterMu).reshape(-1, 2)
+        self.paramClusterSigma = np.vstack(self.paramClusterSigma).reshape((-1, 2, 2))
+
+    # 빈 클러스터를 제거하는 과정
+    def removeEmptyCluster(self, idxEmptyCluster):
+        idxEndCluster = self.cntClusters - 1
+        for itrClusterSample in range(len(self.setClusterAssignment[idxEndCluster])):
+            self.idxClusterAssignment[self.setClusterAssignment[idxEndCluster][itrClusterSample]] = idxEmptyCluster
+        self.setClusterAssignment[idxEmptyCluster] = self.setClusterAssignment[idxEndCluster]
+        self.cntClusterAssignment[idxEmptyCluster] = self.cntClusterAssignment[idxEndCluster]
+        self.paramClusterMu[idxEmptyCluster] = self.paramClusterMu[idxEndCluster]
+        self.paramClusterSigma[idxEmptyCluster] = self.paramClusterSigma[idxEndCluster]
+
+        self.setClusterAssignment.pop(idxEndCluster)
+        self.cntClusterAssignment.pop(idxEndCluster)
+        self.paramClusterSigma.pop(idxEndCluster)
+        self.paramClusterMu.pop(idxEndCluster)
+        self.cntClusters = self.cntClusters - 1
+
+    def printOut(self):
+        func = lambda x: round(x, 2)
+        mu = [list(map(func, i)) for i in self.paramClusterMu]
+        sigma = [[list(map(func, i)) for i in j] for j in self.paramClusterSigma]
+        # print ("Data : ",self.data)
+        print("Cluster Assignment : ", self.idxClusterAssignment)
+        print("Cluster Set : ", self.setClusterAssignment)
+        print("Cluster Assignment Count : ", self.cntClusterAssignment)
+        print("Cluster Num : ", self.cntClusters)
+        print("Cluster Mu : ", mu)
+        print("Cluster Sigma : ", sigma)
+        print("Cluster list over iter : ", self.cntClusters_list_over_iter)
+
+    def plot(self, contour=True, title=True, save=False, save_format='pdf', figsize=(18, 3)):
+        fig, axs = plt.subplots(1, 6, figsize=figsize)
+        axs[0].imshow(self.wbm_obj.data_with_nan[self.wbm_id].reshape(self.wbm_obj.map_shape), aspect='auto',
+                      interpolation='none')
+        axs[1].scatter(self.data_xy[:, 0], self.data_xy[:, 1], marker='.', c='b')
+        axs[2].scatter(self.data[:, 0], self.data[:, 1], marker='.', c='b')
+        axs[3].scatter(self.data[:, 0], self.data[:, 1], c=self.idxClusterAssignment, marker='.', cmap='rainbow')
+        axs[3].scatter(self.paramClusterMu.T[0], self.paramClusterMu.T[1], c='w', marker='*')
+        axs[4].scatter(self.data_xy[:, 0], self.data_xy[:, 1], c=self.idxClusterAssignment, marker='.', cmap='rainbow')
+
+        axs[1].set_xlim(self.min_x - self.wbm_obj.offset_x, self.max_x + self.wbm_obj.offset_x)
+        axs[1].set_ylim(self.min_y - self.wbm_obj.offset_y, self.max_y + self.wbm_obj.offset_y)
+        axs[4].set_xlim(self.min_x - self.wbm_obj.offset_x, self.max_x + self.wbm_obj.offset_x)
+        axs[4].set_ylim(self.min_y - self.wbm_obj.offset_y, self.max_y + self.wbm_obj.offset_y)
+
+        axs[2].set_xlim(self.min_t - self.wbm_obj.offset_t, self.max_t + self.wbm_obj.offset_t)
+        axs[2].set_ylim(self.min_r - self.wbm_obj.offset_r, self.max_r + self.wbm_obj.offset_r)
+        axs[3].set_xlim(self.min_t - self.wbm_obj.offset_t, self.max_t + self.wbm_obj.offset_t)
+        axs[3].set_ylim(self.min_r - self.wbm_obj.offset_r, self.max_r + self.wbm_obj.offset_r)
+
+        axs[5].plot(self.cntClusters_list_over_iter, 'bo-')
+
+        if title:
+            axs[0].set_title(f'{self.wbm_obj.label_name_org[self.target_label]}')
+            axs[5].set_title(f'last cntClusters{self.cntClusters_list_over_iter[-1]}')
+
+        for i in range(5):
+            axs[i].get_xaxis().set_visible(False)
+            axs[i].get_yaxis().set_visible(False)
+            axs[i].set_facecolor('#a9a9a9')
+
+        if contour:
+            for clst, cnt in enumerate(self.cntClusterAssignment):
+                if cnt > 2:
+                    mu = self.paramClusterMu[clst]
+                    cov = self.paramClusterSigma[clst]
+                    gridX = np.arange(0 - self.offset_t, self.max_t + self.offset_t, (self.max_t + self.offset_t) / 100)
+                    gridY = np.arange(0 - self.offset_r, self.max_r + self.offset_r, (self.max_r + self.offset_r) / 100)
+                    meshX, meshY = np.meshgrid(gridX, gridY)
+
+                    Z = np.zeros(shape=(len(gridY), len(gridX)), dtype=float)
+                    for itr1 in range(len(meshX)):
+                        for itr2 in range(len(meshX[itr1])):
+                            Z[itr1][itr2] = stats.multivariate_normal.pdf([meshX[itr1][itr2],
+                                                                           meshY[itr1][itr2]],
+                                                                          mean=mu, cov=cov)
+                    axs[3].contour(meshX, meshY, Z, 1, colors='k', linewidths=1)
+        if save:
+            fname = self.wbm_obj.save_folder_figures + f'dpgmm_mc_plot_{self.wbm_id}.{save_format}'
+            fig.savefig(fname)
+        plt.show()
+
+    def plot_iter(self, itr, contour=True, title=True, save=False, save_format='png', figsize=(9, 3)):
+        para_Mu = np.vstack(self.paramClusterMu).reshape(-1, 2)
+        para_Sigma = np.vstack(self.paramClusterSigma).reshape((-1, 2, 2))
+        fig, axs = plt.subplots(1, 3, figsize=figsize)
+        fig.suptitle(f'wbm id={self.wbm_id}, gamma={self.gamma}, # of iter={itr}, cntClusters={self.cntClusters}')
+        axs[0].scatter(self.data[:, 0], self.data[:, 1], c=self.idxClusterAssignment, marker='.', cmap='rainbow')
+        axs[0].scatter(para_Mu.T[0], para_Mu.T[1], c='w', marker='*')
+        axs[0].set_xlim(self.min_t - self.wbm_obj.offset_t, self.max_t + self.wbm_obj.offset_t)
+        axs[0].set_ylim(self.min_r - self.wbm_obj.offset_r, self.max_r + self.wbm_obj.offset_r)
+
+        axs[1].scatter(self.data_xy[:, 0], self.data_xy[:, 1], c=self.idxClusterAssignment, marker='.', cmap='rainbow')
+        axs[1].set_xlim(self.min_x - self.wbm_obj.offset_x, self.max_x + self.wbm_obj.offset_x)
+        axs[1].set_ylim(self.min_y - self.wbm_obj.offset_y, self.max_y + self.wbm_obj.offset_y)
+
+        for i in range(2):
+            axs[i].get_xaxis().set_visible(False)
+            axs[i].get_yaxis().set_visible(False)
+            axs[i].set_facecolor('#a9a9a9')
+
+        axs[2].plot(self.cntClusters_list_over_iter, 'bo-')
+
+        if contour:
+            for clst, cnt in enumerate(self.cntClusterAssignment):
+                if cnt > 2:
+                    mu = para_Mu[clst]
+                    cov = para_Sigma[clst]
+                    gridX = np.arange(0 - self.offset_t, self.max_t + self.offset_t, (self.max_t + self.offset_t) / 100)
+                    gridY = np.arange(0 - self.offset_r, self.max_r + self.offset_r, (self.max_r + self.offset_r) / 100)
+                    meshX, meshY = np.meshgrid(gridX, gridY)
+
+                    Z = np.zeros(shape=(len(gridY), len(gridX)), dtype=float)
+                    for itr1 in range(len(meshX)):
+                        for itr2 in range(len(meshX[itr1])):
+                            Z[itr1][itr2] = stats.multivariate_normal.pdf([meshX[itr1][itr2],
+                                                                           meshY[itr1][itr2]],
+                                                                          mean=mu, cov=cov)
+                    axs[0].contour(meshX, meshY, Z, 1, colors='k', linewidths=1)
+        if save:
+            fname = self.save_folder_dpgmm_mc + f'dpgmm_mc_plot_iter_{self.wbm_id}_iter_{itr}.{save_format}'
+            fig.savefig(fname)
+        plt.show()
+
+
 class DPGMM_VI:
     def __init__(self, wbm_id, wbm_obj, coordinate='polar'):
         self.wbm_id = wbm_id
@@ -722,41 +1140,46 @@ class CG:
 
 class MODEL:
     def __init__(self, wbm_obj):
-        """
-        :param wbm_obj: an instance of WBM class
-        """
 
         self.wbm_obj = wbm_obj
-
         self.sim_rank_dict = {'EUC': {}, 'JSD': {}, 'SKL': {}, 'WMH': {}}
         self.sim_score_dict = {'EUC': {}, 'JSD': {}, 'SKL': {}, 'WMH': {}}
         self.runtime_dict = {}
+        self.fname_runtime_dict = self.wbm_obj.save_folder_runtime + f'runtime_dict.json'
 
-    def get_dpgmm(self):
+        if not os.path.isfile(self.fname_runtime_dict):
+            with open(self.fname_runtime_dict, 'w') as fw:
+                fw.write(json.dumps({'0_init': get_now_str()}, indent=4, sort_keys=True))
 
-        self.fname_dpgmm_list = 'dpgmm_list'
+    def get_dpgmm(self, infer_method='vi'):
+        self.dpgmm_infer_method = infer_method
+        self.fname_dpgmm_list = f'dpgmm_list_{self.dpgmm_infer_method}'
+        # 기존에 만든 파일이 있을 경우
         if os.path.isfile(self.wbm_obj.save_folder_results + self.fname_dpgmm_list):
             self.load_check_dpgmm = True
             infile = open(self.wbm_obj.save_folder_results + self.fname_dpgmm_list, 'rb')
             self.dpgmm_list = pickle.load(infile, encoding='latin1')
-
+        # 파일이 없을 경우, 새로 만들고 시간을 기록한다.
         else:
             self.load_check_dpgmm = False
             time_dpgmm_start = time.time()
             self.dpgmm_list = []
-            for wbm_id in tqdm(range(self.wbm_obj.data_len), desc='DPGMM...'):
-                dpgmm = DPGMM_VI(wbm_id, self.wbm_obj)
-                dpgmm.fit_dpgmm()
-                self.dpgmm_list.append(dpgmm)
+            if self.dpgmm_infer_method == 'vi':
+                for wbm_id in tqdm(range(self.wbm_obj.data_len), desc='DPGMM...'):
+                    dpgmm = DPGMM_VI(wbm_id, self.wbm_obj)
+                    dpgmm.fit_dpgmm()
+                    self.dpgmm_list.append(dpgmm)
+            else:
+                for wbm_id in tqdm(range(self.wbm_obj.data_len), desc='DPGMM...'):
+                    dpgmm = DPGMM_MC(wbm_id, self.wbm_obj)
+                    dpgmm.cluster()
+                    self.dpgmm_list.append(dpgmm)
             time_dpgmm_end = time.time()
-            self.runtime_dict['runtime_dpgmm'] = np.round(time_dpgmm_end - time_dpgmm_start, 3)
+            time_dpgmm = np.round(time_dpgmm_end - time_dpgmm_start, 3)
+            self.runtime_dict['dpgmm'] = {self.dpgmm_infer_method: time_dpgmm, 'end_time': get_now_str()}
             save_list(self.dpgmm_list, self.fname_dpgmm_list, self.wbm_obj.save_folder_results)
 
     def get_skldm(self, linkage_method='complete', min_defects=2):
-
-        """
-        get_skldm(self, linkage_method='complete', min_defects=2):
-        """
         self.linkage_method = linkage_method
         self.cntClusters_list = []
         self.mean_list = []
@@ -777,7 +1200,7 @@ class MODEL:
         self.mean_arr = np.array(self.mean_list)
         self.cov_arr = np.array(self.cov_list)
 
-        self.fname_skldm = 'skldm'
+        self.fname_skldm = f'skldm_{self.dpgmm_infer_method}'
         if os.path.isfile(self.wbm_obj.save_folder_results + self.fname_skldm):
             self.load_check_skldm = True
             infile = open(self.wbm_obj.save_folder_results + self.fname_skldm, 'rb')
@@ -788,7 +1211,8 @@ class MODEL:
             time_skldm_start = time.time()
             self.skldm = get_SKLDM(self.mean_list, self.cov_list)
             time_skldm_end = time.time()
-            self.runtime_dict['runtime_skldm'] = np.round(time_skldm_end - time_skldm_start, 3)
+            time_skldm = np.round(time_skldm_end - time_skldm_start, 3)
+            self.runtime_dict['skldm'] = {self.dpgmm_infer_method: time_skldm, 'end_time': get_now_str()}
             save_list(self.skldm, self.fname_skldm, self.wbm_obj.save_folder_results)
 
         for i in range(len(self.skldm)):
@@ -800,6 +1224,7 @@ class MODEL:
 
     def get_cg(self, n_cg=9, cov_type='real'):
         self.n_cg = n_cg
+        self.cov_type = cov_type
         time_cg_start = time.time()
         self.cg = CG(self.wbm_obj,
                      self.res_linkage,
@@ -809,7 +1234,8 @@ class MODEL:
                      cov_type=cov_type,
                      n_cg=self.n_cg)
         time_cg_end = time.time()
-        self.runtime_dict[f'runtime_cg_{self.n_cg}'] = np.round(time_cg_end - time_cg_start, 3)
+        time_cg = np.round(time_cg_end - time_cg_start, 3)
+        self.runtime_dict['cg'] = {self.dpgmm_infer_method: {n_cg: time_cg}, 'end_time': get_now_str()}
 
     def get_cg_list(self, max_n_cg=30, cov_type='real', plot=True):
         self.cg_list = []
@@ -824,7 +1250,9 @@ class MODEL:
                                    n_cg=i))
         self.cg_loss_list = [cg.loss_mean for cg in self.cg_list]
         time_cg_list_end = time.time()
-        self.runtime_dict[f'runtime_cg_list_max_n_cg_{max_n_cg}'] = np.round(time_cg_list_end - time_cg_list_start, 3)
+        time_cg_list = np.round(time_cg_list_end - time_cg_list_start, 3)
+        self.runtime_dict['cg_list'] = {self.dpgmm_infer_method: {max_n_cg: time_cg_list},
+                                        'end_time': get_now_str()}
         if plot:
             xticks = np.arange(1, max_n_cg + 1)
             fig, axs = plt.subplots(figsize=(15, 4))
@@ -1108,43 +1536,55 @@ class MODEL:
         return acc, pi, pi_max, tpr, fpr, specificity_list, auc(fpr, tpr).round(4)
 
     def update_dict_sim_val(self, target_wf_list, sim_method='JSD', weight_type='type_2', m=1, s_out_rate=0.1):
-        """
-        update_dict_sim_val(self, target_wf_list, model='JSD', weight_type='type_2', m=3, s_out_rate=0.1):
-        """
+
+        time_start = time.time()
 
         if sim_method == 'JSD':
             key_n_cg = f'n_cg:{self.n_cg}'
             self.update_sim_mtx_dict_JSD()
+            time_end = time.time()
             self.sim_rank_dict[sim_method] = {}
             self.sim_rank_dict[sim_method][key_n_cg] = {}
             self.sim_rank_dict[sim_method][key_n_cg]['value'] = {}
             for target_wf in target_wf_list:
                 self.sim_rank_dict[sim_method][key_n_cg]['value'][target_wf] = self.sim_mtx_dict[sim_method][target_wf]
 
-        elif sim_method == 'SKL':
-            key_n_cg = f'n_cg:{self.n_cg}'
-            self.update_sim_mtx_dict_SKL()
-            self.sim_rank_dict[sim_method] = {}
-            self.sim_rank_dict[sim_method][key_n_cg] = {}
-            self.sim_rank_dict[sim_method][key_n_cg]['value'] = {}
-            for target_wf in target_wf_list:
-                self.sim_rank_dict[sim_method][key_n_cg]['value'][target_wf] = self.sim_mtx_dict[sim_method][target_wf]
+            if not (self.load_check_dpgmm and self.load_check_skldm):
+                time_JSD = np.round(time_end - time_start
+                                    + self.runtime_dict['dpgmm'][self.dpgmm_infer_method]
+                                    + self.runtime_dict['skldm'][self.dpgmm_infer_method]
+                                    + self.runtime_dict['cg'][self.dpgmm_infer_method][self.n_cg],
+                                    3)
+                self.runtime_dict['JSD'] = {'para': {'n_cg': self.n_cg,
+                                                     'cov_type': self.cov_type,
+                                                     'linkage_method': self.linkage_method},
+                                            'runtime': time_JSD,
+                                            'target_wf_list': target_wf_list}
+                fname_time = self.wbm_obj.save_folder_runtime + f'runtime_JSD_nCG_' \
+                                                                f'{self.dpgmm_infer_method}_' \
+                                                                f'{self.n_cg}_{time_JSD}.csv'
+                np.savetxt(fname_time, np.array([time_JSD]), fmt='%1.8f')
+                print(f'runtime_JSD : {time_JSD}')
 
         elif sim_method == 'EUC':
             self.update_sim_mtx_dict_euclidean()
+            time_end = time.time()
             self.sim_rank_dict[sim_method] = {}
             self.sim_rank_dict[sim_method]['None'] = {}
             self.sim_rank_dict[sim_method]['None']['value'] = {}
             for target_wf in target_wf_list:
                 self.sim_rank_dict[sim_method]['None']['value'][target_wf] = self.sim_mtx_dict[sim_method][target_wf]
+            time_EUC = time_end - time_start
+            self.runtime_dict['EUC'] = {'runtime': time_EUC, 'target_wf_list': target_wf_list}
 
         # IN CASE WMH
-        else:
+        elif sim_method == 'WMH':
             param_str_key = f'{weight_type}, {m}, {s_out_rate}'
             self.sim_rank_dict[sim_method][param_str_key] = {}
             self.sim_rank_dict[sim_method][param_str_key]['value'] = {}
-            time_wmhd_start = time.time()
+
             for target_wf in target_wf_list:
+                time_start_for_wf = time.time()
                 fname_wmhd_sim_val = f'wmhd_sim_val_{weight_type}_{m}_{s_out_rate}_wf_{target_wf}.csv'
                 if os.path.isfile(self.wbm_obj.save_folder_results + fname_wmhd_sim_val):
                     self.load_check_wmhd = True
@@ -1157,8 +1597,13 @@ class MODEL:
                     self.sim_rank_dict[sim_method][param_str_key]['value'][target_wf] = wmhd_sim_val
                     np.savetxt(self.wbm_obj.save_folder_results + fname_wmhd_sim_val, wmhd_sim_val,
                                delimiter=',', fmt='%1.8f')
-            time_wmhd_end = time.time()
-            self.runtime_dict['runtime_wmhd_' + param_str_key] = np.round(time_wmhd_end - time_wmhd_start, 3)
+                    time_end_for_wf = time.time()
+                    time_wmhd_for_wf = np.round(time_end_for_wf - time_start_for_wf, 3)
+                    self.runtime_dict['WMHD'] = {param_str_key: {target_wf: time_wmhd_for_wf}}
+            if not self.load_check_wmhd:
+                time_end = time.time()
+                time_wmhd = np.round(time_end - time_start, 3)
+                self.runtime_dict['WMHD'] = {param_str_key: {'total_time': time_wmhd}}
 
     def update_dict_sim_score(self, rank_interval=1):
         self.label_cnt_dict = self.wbm_obj.label_cnt_dict
@@ -1207,427 +1652,27 @@ class MODEL:
         with open(export_name, 'w') as fw:
             fw.write(json.dumps(self.sim_score_dict, indent=4, sort_keys=True))
 
+    def get_similarity_euclidean(self, target_wf_list):
+        self.update_dict_sim_val(target_wf_list, sim_method='EUC')
 
-class WM811K_DATASET:
-    def __init__(self, verbose=False):
-        data_dir = 'D:/ML/other_works/WaPIRL-main/data/wm811k/labeled/train'
-        self.map_type_list = os.listdir(data_dir)
-        self.glob_shape_valid_list = []
-        self.glob_shape_list = []
-        self.glob_valid_list = []
-        self.glob_map_type_list = []
-        self.glob_map_label_list = []
-        self.glob_fail_rate_list = []
-        self.map_type_dict = {}
+    def get_similarity_JSD(self,
+                           target_wf_list,
+                           n_cg=9,
+                           dpgmm_infer_method='vi',
+                           cov_type='real',
+                           linkage_method='complete'):
+        self.get_dpgmm(infer_method=dpgmm_infer_method)
+        self.get_skldm(linkage_method=linkage_method)
+        self.get_cg(n_cg=n_cg, cov_type=cov_type)
+        self.update_dict_sim_val(target_wf_list, sim_method='JSD')
 
-        for i, map_type in enumerate(self.map_type_list):
-            png_list = os.listdir(os.path.join(data_dir, map_type))
-            shape_list = []
+    def get_similarity_WMHD(self, target_wf_list, weight_type='type_2', m=1, s_out_rate=0.1):
+        self.update_dict_sim_val(target_wf_list, sim_method='WMH', weight_type=weight_type, m=m, s_out_rate=s_out_rate)
 
-            for file in tqdm(png_list, desc=f'{map_type}'):
-                png_path = os.path.join(data_dir, map_type, file)
-                image = np.array(Image.open(png_path))
-                image_valid = (image != 0).sum()
-                self.glob_fail_rate_list.append(np.round((image == 255).sum() / image_valid, 4))
-                self.glob_shape_list.append(image.shape)
-                self.glob_valid_list.append(image_valid)
-                self.glob_map_type_list.append(map_type)
-                self.glob_map_label_list.append(i)
-                shape_valid = (image.shape[0], image.shape[1], image_valid)
-                shape_list.append(shape_valid)
-                self.glob_shape_valid_list.append(shape_valid)
-
-                if verbose:
-                    print(f'{map_type} / {file} / {shape_valid}')
-            self.map_type_dict[map_type] = Counter(shape_list).most_common()
-
-        self.glob_shape_counter = Counter(self.glob_shape_valid_list).most_common()
-
-        self.map_type_list = np.array(self.map_type_list)
-        self.glob_shape_valid_list = np.array(self.glob_shape_valid_list)
-        self.glob_shape_list = np.array(self.glob_shape_list)
-        self.glob_valid_list = np.array(self.glob_valid_list)
-        self.glob_map_type_list = np.array(self.glob_map_type_list)
-        self.glob_map_label_list = np.array(self.glob_map_label_list)
-        self.glob_fail_rate_list = np.array(self.glob_fail_rate_list)
-
-        self.glob_label_count_list = np.zeros_like(self.glob_map_label_list)
-        for i, v in enumerate(self.glob_shape_counter):
-            shape_valid_mask = ((self.glob_shape_valid_list == v[0]).sum(axis=1) == 3).flatten()
-            local_label_list = self.glob_map_label_list[shape_valid_mask]
-            for label in np.unique(local_label_list):
-                label_mask = self.glob_map_label_list == label
-                shape_valid_label_mask = shape_valid_mask * label_mask == 1
-                label_count = shape_valid_label_mask.sum()
-                self.glob_label_count_list[shape_valid_label_mask] = label_count
-
-
-class WM811K:
-    def __init__(self, wm811k_dataset_obj, map_shape, n_valid, label_count_lim=10, map_type_exclude='none',
-                 verbose=True):
-        data_dir = 'D:/ML/other_works/WaPIRL-main/data/wm811k/labeled/train'
-        self.map_shape = map_shape
-        self.n_valid = n_valid
-        self.label_count_lim = label_count_lim
-        self.map_type_list = wm811k_dataset_obj.map_type_list  # center, donut, edge-loc, edge-ring, loc, near-full, none, random, scratch 9개
-        self.seq = np.arange(len(wm811k_dataset_obj.glob_fail_rate_list))
-        self.ex_mask = np.ones((len(wm811k_dataset_obj.glob_fail_rate_list)))
-        for ex_map_type in map_type_exclude:
-            ex_label = np.argmax(wm811k_dataset_obj.map_type_list == ex_map_type)
-            boolean_arr = wm811k_dataset_obj.glob_map_label_list != ex_label
-            self.ex_mask = self.ex_mask * boolean_arr
-        self.ex_mask *= ((wm811k_dataset_obj.glob_shape_list == map_shape).sum(axis=1) == 2)
-        self.ex_mask *= wm811k_dataset_obj.glob_valid_list == n_valid
-        self.ex_mask *= wm811k_dataset_obj.glob_label_count_list > label_count_lim
-        self.ex_mask = self.ex_mask == 1
-        self.seq_mask = self.seq[self.ex_mask]
-
-        self.data = []
-        glob_counter = 0
-        match_counter = 0
-        match_seq = self.seq_mask[match_counter]
-
-        for i, map_type in enumerate(self.map_type_list):
-            png_list = os.listdir(os.path.join(data_dir, map_type))
-
-            for file in png_list:
-                if glob_counter == match_seq:
-                    png_path = os.path.join(data_dir, map_type, file)
-                    image = np.array(Image.open(png_path))
-                    self.data.append(image.flatten())
-                    if verbose:
-                        print(
-                            f'map_type:{map_type}, glob_counter:{glob_counter}, match_counter:{match_counter}, match_seq:{self.seq_mask[match_counter]}')
-                    if match_counter != len(self.seq_mask) - 1:
-                        match_counter += 1
-                        match_seq = self.seq_mask[match_counter]
-                glob_counter += 1
-
-        self.data = np.array(self.data)
-        self.data[self.data == 127] = 1
-        self.data[self.data == 255] = 2
-        self.data_len = len(self.data)
-        self.fail_rate_list = wm811k_dataset_obj.glob_fail_rate_list[self.seq_mask]
-        self.label_list = wm811k_dataset_obj.glob_map_label_list[self.seq_mask]
-
-        self.label_count_dict = {k: (self.label_list == k).sum() for k in range(len(self.map_type_list))}
-
-    def plot_failrate_boxplot(self):
-        fail_rate_arr = [self.fail_rate_list[self.label_list == i] for i in np.unique(self.label_list)]
-        map_type_label = self.map_type_list[np.unique(self.label_list)]
-        plt.figure(figsize=(8, 5))
-        plt.boxplot(fail_rate_arr, labels=map_type_label)
-        plt.ylim(0, 1)
-        plt.show()
-
-    def plot_sample_9_imgs(self):
-        fig, axs = plt.subplots(1, 9, figsize=(20, 2))
-        fig.suptitle(self.map_shape, y=1.1)
-        for i in range(9):
-            axs[i].axis('off')
-        for i, label_count in enumerate(self.label_count_dict.values()):
-            axs[i].set_title(self.map_type_list[i])
-            if label_count != 0:
-                sample_id = int(np.random.choice(np.arange(self.data_len)[self.label_list == i], 1))
-                axs[i].imshow(self.data[sample_id].reshape(self.map_shape), aspect='auto', interpolation='none')
-
-        plt.show()
-
-    def plot_avg_map(self):
-        fig, axs = plt.subplots(1, 9, figsize=(20, 2))
-        fig.suptitle(self.map_shape, y=1.1)
-        for i, label_count in enumerate(self.label_count_dict.values()):
-            axs[i].set_title(self.map_type_list[i])
-            axs[i].axis('off')
-            if label_count != 0:
-                avg_map = np.array(self.data[self.label_list == i], dtype='float')
-                avg_map[avg_map == 0] = np.nan
-                avg_map[avg_map == 1] = 0
-                avg_map[avg_map == 2] = 1
-                axs[i].imshow(avg_map.mean(axis=0).reshape(self.map_shape), aspect='auto', interpolation='none')
-        plt.show()
-
-    def plot_sample_9xn_imgs(self):
-        n_cols = self.label_count_lim - 1
-        fig, axs = plt.subplots(9, n_cols, figsize=(20, 20))
-        for i in range(9):
-            for j in range(n_cols):
-                axs[i, j].axis('off')
-        for i, label_count in enumerate(self.label_count_dict.values()):
-            axs[i, 0].set_title(self.map_type_list[i])
-            if label_count != 0:
-                sample_id_arr = np.random.choice(np.arange(self.data_len)[self.label_list == i], n_cols, replace=False)
-                for j, sample_id in enumerate(sample_id_arr):
-                    axs[i][j].imshow(self.data[sample_id].reshape(self.map_shape), aspect='auto', interpolation='none')
-        plt.show()
-
-    def plot_piechart(self):
-        fig, axs = plt.subplots(figsize=(6, 6))
-        axs.pie(self.label_count_dict.values(), labels=self.map_type_list, autopct='%1.1f%%', shadow=True,
-                startangle=90)
-        axs.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-        plt.show()
-
-
-class DPGMM_MC:
-
-    def __init__(self, wbm_id, wbm_obj, coordinate='polar'):
-        self.wbm_id = wbm_id
-        self.wbm_obj = wbm_obj
-        self.target_label = self.wbm_obj.label_list[self.wbm_id]
-        if coordinate == 'polar':
-            self.data = self.wbm_obj.get_polar_points(self.wbm_id)
-        else:
-            self.data = self.wbm_obj.get_xy_points(self.wbm_id)
-        self.data_xy = self.wbm_obj.get_xy_points(self.wbm_id)
-
-        self.cntData = len(self.data)
-        self.max_t = self.wbm_obj.max_t
-        self.max_r = self.wbm_obj.max_r
-        self.max_x = self.wbm_obj.max_x
-        self.max_y = self.wbm_obj.max_y
-        self.min_t = self.wbm_obj.min_t
-        self.min_r = self.wbm_obj.min_r
-        self.min_x = self.wbm_obj.min_x
-        self.min_y = self.wbm_obj.min_y
-        self.offset_t = self.wbm_obj.offset_t
-        self.offset_r = self.wbm_obj.offset_r
-        self.offset_x = self.wbm_obj.offset_x
-        self.offset_y = self.wbm_obj.offset_y
-
-        self.cntClusters_list_over_iter = []
-        self.setClusterAssignment = []  # 각 cluster 의 assign 된 data 의 index 를 저장
-        self.paramClusterSigma = []  # 각 cluster 의 sigma parameter 를 저장
-        self.paramClusterMu = []  # 각 cluster 의 mu parameter 를 저장
-        self.cntClusterAssignment = []  # 각 cluster 에 assign 된 data 개수를 counting
-
-    def cluster(self,
-                gamma=0.001,
-                itr=10,
-                visualize=False,
-                printOut=False,
-                tqdm_on=False,
-                save_plot=False,
-                truncate=sys.maxsize):
-        self.save_folder_dpgmm_mc = make_sub_folder(self.wbm_obj.save_folder_figures,
-                                                    'dpgmm_mc', f'gamma_{gamma}', f'wbm_id_{self.wbm_id}')
-        self.gamma = gamma  # gamma 값을 저장
-        self.cntClusters = 0  # cluster 의 개수
-        self.idxClusterAssignment = np.zeros(self.cntData, dtype=int)-1  # 각 data 의 assign 된 cluster index 를 저장 및 초기화
-
-        if tqdm_on:
-            itr_range = trange(itr)
-        else:
-            itr_range = range(itr)
-
-        for i in itr_range:  # while sampling iteration
-            for idx in range(self.cntData):  # while each data instance in the dataset
-                # instance 의 현재 assignment 지워주기, 맨처음 iteration 에서는 건너 뜀. (cluster idx = -1)
-                if self.idxClusterAssignment[idx] != -1:
-                    self.cntClusterAssignment[self.idxClusterAssignment[idx]] = \
-                        self.cntClusterAssignment[self.idxClusterAssignment[idx]] - 1
-                    self.setClusterAssignment[self.idxClusterAssignment[idx]].remove(idx)
-                    if self.cntClusterAssignment[self.idxClusterAssignment[idx]] == 0:  # 빈 cluster 일 경우 cluster 제거
-                        self.removeEmptyCluster(self.idxClusterAssignment[idx])
-                    self.idxClusterAssignment[idx] = -1
-
-                # prior 값 계산
-                normalize = 0.0
-                prior = []
-                for itrCluster in range(self.cntClusters):  # 현재 cluster 갯수만큼 iteration 진행
-                    prior.append(self.cntClusterAssignment[itrCluster])
-                    normalize += self.cntClusterAssignment[itrCluster]
-                if self.cntClusters < truncate:  # cluster 개수의 상계(upper limit)를 초과하지 않은 경우
-                    prior.append(self.gamma)
-                    normalize += self.gamma
-                for itrCluster in range(len(prior)):
-                    prior[itrCluster] = prior[itrCluster] / normalize
-
-                # posterior 값 계산 과정. posterior = prior * likelihood
-                instance = self.data[idx]
-                posterior = []
-                for itrCluster in range(self.cntClusters):
-                    likelihood = stats.multivariate_normal(self.paramClusterMu[itrCluster],
-                                                           self.paramClusterSigma[itrCluster]).pdf(instance)
-
-                    posterior.append(prior[itrCluster] * likelihood)
-                if self.cntClusters < truncate:
-                    posterior.append(prior[len(prior) - 1] * 1.0)
-                normalize = 0.0
-                for itrCluster in range(len(posterior)):
-                    normalize = normalize + posterior[itrCluster]
-                for itrCluster in range(len(posterior)):
-                    posterior[itrCluster] = posterior[itrCluster] / normalize  # 위에서 계산한 값으로 normalizing
-                idxSampledCluster = sampleFromDistribution(posterior)
-
-                # parameter mu, sigma 업데이트
-                if idxSampledCluster != self.cntClusters:  # 현재 instance 가 기존 cluster 로 assign 되었을 때
-                    self.idxClusterAssignment[idx] = int(idxSampledCluster)
-                    self.setClusterAssignment[idxSampledCluster].append(idx)
-                    self.cntClusterAssignment[idxSampledCluster] = self.cntClusterAssignment[idxSampledCluster] + 1
-                    dataComponent = np.ndarray(shape=(len(self.setClusterAssignment[idxSampledCluster]), len(self.data[0])),
-                                               dtype=np.float32)
-                    for idxComponentSample in range(len(self.setClusterAssignment[idxSampledCluster])):
-                        dataComponentInstance = self.data[self.setClusterAssignment[idxSampledCluster][idxComponentSample]]
-                        for idxDimension in range(len(dataComponentInstance)):
-                            dataComponent[idxComponentSample][idxDimension] = dataComponentInstance[idxDimension]
-                    self.paramClusterMu[idxSampledCluster] = np.mean(dataComponent, axis=0).tolist()
-                    self.paramClusterSigma[idxSampledCluster] = (
-                            np.cov(dataComponent.T) + np.identity(len(instance)) * 1.0 / self.cntClusterAssignment[idxSampledCluster]).tolist()
-                else:  # 현재 instance 가 새 cluster 로 assign 되었을 때
-                    self.idxClusterAssignment[idx] = int(idxSampledCluster)
-                    self.cntClusters = self.cntClusters + 1
-                    self.setClusterAssignment.append([idx])
-                    self.cntClusterAssignment.append(1)
-                    self.paramClusterMu.append([])
-                    self.paramClusterSigma.append([])
-                    self.paramClusterMu[idxSampledCluster] = instance.tolist()
-                    self.paramClusterSigma[idxSampledCluster] = (np.identity(len(instance)) * 10.0).tolist()
-
-            self.cntClusters_list_over_iter.append(self.cntClusters)
-            # visualization
-            if printOut:
-                print('#####################################################')
-                print('Iteration ', i + 1)
-                print('#####################################################')
-                self.printOut()
-            if visualize:
-                self.plot_iter(itr=i, save=save_plot)
-                # plotPoints(self.data, self.idxClusterAssignment, self.paramClusterMu, self.paramClusterSigma, numLine=1)
-        self.paramClusterMu = np.vstack(self.paramClusterMu).reshape(-1, 2)
-        self.paramClusterSigma = np.vstack(self.paramClusterSigma).reshape((-1, 2, 2))
-
-    # 빈 클러스터를 제거하는 과정
-    def removeEmptyCluster(self, idxEmptyCluster):
-        idxEndCluster = self.cntClusters - 1
-        for itrClusterSample in range(len(self.setClusterAssignment[idxEndCluster])):
-            self.idxClusterAssignment[self.setClusterAssignment[idxEndCluster][itrClusterSample]] = idxEmptyCluster
-        self.setClusterAssignment[idxEmptyCluster] = self.setClusterAssignment[idxEndCluster]
-        self.cntClusterAssignment[idxEmptyCluster] = self.cntClusterAssignment[idxEndCluster]
-        self.paramClusterMu[idxEmptyCluster] = self.paramClusterMu[idxEndCluster]
-        self.paramClusterSigma[idxEmptyCluster] = self.paramClusterSigma[idxEndCluster]
-
-        self.setClusterAssignment.pop(idxEndCluster)
-        self.cntClusterAssignment.pop(idxEndCluster)
-        self.paramClusterSigma.pop(idxEndCluster)
-        self.paramClusterMu.pop(idxEndCluster)
-        self.cntClusters = self.cntClusters - 1
-
-    def printOut(self):
-        func = lambda x: round(x, 2)
-        mu = [list(map(func, i)) for i in self.paramClusterMu]
-        sigma = [[list(map(func, i)) for i in j] for j in self.paramClusterSigma]
-        # print ("Data : ",self.data)
-        print("Cluster Assignment : ", self.idxClusterAssignment)
-        print("Cluster Set : ", self.setClusterAssignment)
-        print("Cluster Assignment Count : ", self.cntClusterAssignment)
-        print("Cluster Num : ", self.cntClusters)
-        print("Cluster Mu : ", mu)
-        print("Cluster Sigma : ", sigma)
-        print("Cluster list over iter : ", self.cntClusters_list_over_iter)
-
-    def plot(self, contour=True, title=True, save=False, save_format='pdf', figsize=(18, 3)):
-        fig, axs = plt.subplots(1, 6, figsize=figsize)
-        axs[0].imshow(self.wbm_obj.data_with_nan[self.wbm_id].reshape(self.wbm_obj.map_shape), aspect='auto',
-                      interpolation='none')
-        axs[1].scatter(self.data_xy[:, 0], self.data_xy[:, 1], marker='.', c='b')
-        axs[2].scatter(self.data[:, 0], self.data[:, 1], marker='.', c='b')
-        axs[3].scatter(self.data[:, 0], self.data[:, 1], c=self.idxClusterAssignment, marker='.', cmap='rainbow')
-        axs[3].scatter(self.paramClusterMu.T[0], self.paramClusterMu.T[1], c='w', marker='*')
-        axs[4].scatter(self.data_xy[:, 0], self.data_xy[:, 1], c=self.idxClusterAssignment, marker='.', cmap='rainbow')
-
-        axs[1].set_xlim(self.min_x - self.wbm_obj.offset_x, self.max_x + self.wbm_obj.offset_x)
-        axs[1].set_ylim(self.min_y - self.wbm_obj.offset_y, self.max_y + self.wbm_obj.offset_y)
-        axs[4].set_xlim(self.min_x - self.wbm_obj.offset_x, self.max_x + self.wbm_obj.offset_x)
-        axs[4].set_ylim(self.min_y - self.wbm_obj.offset_y, self.max_y + self.wbm_obj.offset_y)
-
-        axs[2].set_xlim(self.min_t - self.wbm_obj.offset_t, self.max_t + self.wbm_obj.offset_t)
-        axs[2].set_ylim(self.min_r - self.wbm_obj.offset_r, self.max_r + self.wbm_obj.offset_r)
-        axs[3].set_xlim(self.min_t - self.wbm_obj.offset_t, self.max_t + self.wbm_obj.offset_t)
-        axs[3].set_ylim(self.min_r - self.wbm_obj.offset_r, self.max_r + self.wbm_obj.offset_r)
-
-        axs[5].plot(self.cntClusters_list_over_iter, 'bo-')
-
-        if title:
-            axs[0].set_title(f'{self.wbm_obj.label_name_org[self.target_label]}')
-            axs[5].set_title(f'last cntClusters{self.cntClusters_list_over_iter[-1]}')
-
-        for i in range(5):
-            axs[i].get_xaxis().set_visible(False)
-            axs[i].get_yaxis().set_visible(False)
-            axs[i].set_facecolor('#a9a9a9')
-
-        if contour:
-            for clst, cnt in enumerate(self.cntClusterAssignment):
-                if cnt > 2:
-                    mu = self.paramClusterMu[clst]
-                    cov = self.paramClusterSigma[clst]
-                    gridX = np.arange(0 - self.offset_t, self.max_t + self.offset_t, (self.max_t + self.offset_t) / 100)
-                    gridY = np.arange(0 - self.offset_r, self.max_r + self.offset_r, (self.max_r + self.offset_r) / 100)
-                    meshX, meshY = np.meshgrid(gridX, gridY)
-
-                    Z = np.zeros(shape=(len(gridY), len(gridX)), dtype=float)
-                    for itr1 in range(len(meshX)):
-                        for itr2 in range(len(meshX[itr1])):
-                            Z[itr1][itr2] = stats.multivariate_normal.pdf([meshX[itr1][itr2],
-                                                                           meshY[itr1][itr2]],
-                                                                          mean=mu, cov=cov)
-                    axs[3].contour(meshX, meshY, Z, 1, colors='k', linewidths=1)
-        if save:
-            fname = self.wbm_obj.save_folder_figures + f'dpgmm_mc_plot_{self.wbm_id}.{save_format}'
-            fig.savefig(fname)
-        plt.show()
-
-    def plot_iter(self, itr, contour=True, title=True, save=False, save_format='png', figsize=(18, 3)):
-        para_Mu = np.vstack(self.paramClusterMu).reshape(-1, 2)
-        para_Sigma = np.vstack(self.paramClusterSigma).reshape((-1, 2, 2))
-        fig, axs = plt.subplots(1, 6, figsize=figsize)
-        axs[0].imshow(self.wbm_obj.data_with_nan[self.wbm_id].reshape(self.wbm_obj.map_shape), aspect='auto',
-                      interpolation='none')
-        axs[1].scatter(self.data_xy[:, 0], self.data_xy[:, 1], marker='.', c='b')
-        axs[2].scatter(self.data[:, 0], self.data[:, 1], marker='.', c='b')
-        axs[3].scatter(self.data[:, 0], self.data[:, 1], c=self.idxClusterAssignment, marker='.', cmap='rainbow')
-        axs[3].scatter(para_Mu.T[0], para_Mu.T[1], c='w', marker='*')
-        axs[4].scatter(self.data_xy[:, 0], self.data_xy[:, 1], c=self.idxClusterAssignment, marker='.', cmap='rainbow')
-
-        axs[1].set_xlim(self.min_x - self.wbm_obj.offset_x, self.max_x + self.wbm_obj.offset_x)
-        axs[1].set_ylim(self.min_y - self.wbm_obj.offset_y, self.max_y + self.wbm_obj.offset_y)
-        axs[4].set_xlim(self.min_x - self.wbm_obj.offset_x, self.max_x + self.wbm_obj.offset_x)
-        axs[4].set_ylim(self.min_y - self.wbm_obj.offset_y, self.max_y + self.wbm_obj.offset_y)
-
-        axs[2].set_xlim(self.min_t - self.wbm_obj.offset_t, self.max_t + self.wbm_obj.offset_t)
-        axs[2].set_ylim(self.min_r - self.wbm_obj.offset_r, self.max_r + self.wbm_obj.offset_r)
-        axs[3].set_xlim(self.min_t - self.wbm_obj.offset_t, self.max_t + self.wbm_obj.offset_t)
-        axs[3].set_ylim(self.min_r - self.wbm_obj.offset_r, self.max_r + self.wbm_obj.offset_r)
-
-        axs[5].plot(self.cntClusters_list_over_iter, 'bo-')
-
-        if title:
-            axs[0].set_title(f'{self.wbm_obj.label_name_org[self.target_label]}')
-            axs[3].set_title(self.cntClusters)
-
-        for i in range(5):
-            axs[i].get_xaxis().set_visible(False)
-            axs[i].get_yaxis().set_visible(False)
-            axs[i].set_facecolor('#a9a9a9')
-
-        if contour:
-            for clst, cnt in enumerate(self.cntClusterAssignment):
-                if cnt > 2:
-                    mu = para_Mu[clst]
-                    cov = para_Sigma[clst]
-                    gridX = np.arange(0 - self.offset_t, self.max_t + self.offset_t, (self.max_t + self.offset_t) / 100)
-                    gridY = np.arange(0 - self.offset_r, self.max_r + self.offset_r, (self.max_r + self.offset_r) / 100)
-                    meshX, meshY = np.meshgrid(gridX, gridY)
-
-                    Z = np.zeros(shape=(len(gridY), len(gridX)), dtype=float)
-                    for itr1 in range(len(meshX)):
-                        for itr2 in range(len(meshX[itr1])):
-                            Z[itr1][itr2] = stats.multivariate_normal.pdf([meshX[itr1][itr2],
-                                                                           meshY[itr1][itr2]],
-                                                                          mean=mu, cov=cov)
-                    axs[3].contour(meshX, meshY, Z, 1, colors='k', linewidths=1)
-        if save:
-            fname = self.save_folder_dpgmm_mc + f'dpgmm_mc_plot_iter_{self.wbm_id}_iter_{itr}.{save_format}'
-            fig.savefig(fname)
-        plt.show()
+    def export_runtime_dict_to_json(self):
+        now_str = get_now_str()
+        with open(self.fname_runtime_dict, 'r') as jsonFile:
+            runtime_dict_temp = json.load(jsonFile)
+        runtime_dict_temp[now_str] = self.runtime_dict
+        with open(self.fname_runtime_dict, 'w') as fw:
+            fw.write(json.dumps(runtime_dict_temp, indent=4, sort_keys=True))

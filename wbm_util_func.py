@@ -14,6 +14,66 @@ from scipy.cluster.hierarchy import linkage
 from tqdm import *
 
 
+# def get_similarity_euclidean(model_obj, target_wf_list):
+#     time_start = time.time()
+#     model_obj.update_dict_sim_val(target_wf_list, sim_method='EUC')
+#     time_end = time.time()
+#     time_EUC = np.round(time_end - time_start, 3)
+#     model_obj.runtime_dict['runtime_EUC'] = time_EUC
+#     print(f'runtime_EUC : {time_EUC}')
+#
+#
+# def get_similarity_JSD(model_obj, target_wf_list, n_cg=9, cov_type='real', linkage_method='complete'):
+#     model_obj.get_dpgmm()
+#     model_obj.get_skldm(linkage_method=linkage_method)
+#     model_obj.get_cg(n_cg=n_cg, cov_type=cov_type)
+#     time_start = time.time()
+#     model_obj.update_dict_sim_val(target_wf_list, sim_method='JSD')
+#     time_end = time.time()
+#
+#     if not model_obj.load_check_dpgmm:
+#         time_JSD = np.round(time_end - time_start
+#                             + model_obj.runtime_dict['runtime_dpgmm']
+#                             + model_obj.runtime_dict['runtime_skldm']
+#                             + model_obj.runtime_dict[f'runtime_cg_{n_cg}'], 3)
+#         model_obj.runtime_dict[f'runtime_JSD_nCG_{n_cg}'] = time_JSD
+#         fname_time = model_obj.wbm_obj.save_folder_runtime + f'runtime_JSD_nCG_{n_cg}_{time_JSD}.csv'
+#         np.savetxt(fname_time, np.array([model_obj.time_JSD]), fmt='%1.8f')
+#         print(f'runtime_JSD : {time_JSD}')
+#
+#
+# def get_similarity_SKL(model_obj, target_wf_list, n_cg=9, linkage_method='complete'):
+#     model_obj.get_dpgmm()
+#     model_obj.get_skldm(linkage_method=linkage_method)
+#     model_obj.get_cg(n_cg=n_cg)
+#     time_start = time.time()
+#     model_obj.update_dict_sim_val(target_wf_list, sim_method='SKL')
+#     time_end = time.time()
+#
+#     if not model_obj.load_check_dpgmm:
+#         time_SKL = np.round(time_end - time_start
+#                             + model_obj.runtime_dict['runtime_dpgmm']
+#                             + model_obj.runtime_dict['runtime_skldm']
+#                             + model_obj.runtime_dict[f'runtime_cg_{n_cg}'], 3)
+#         model_obj.runtime_dict[f'runtime_SKL_nCG_{n_cg}'] = time_SKL
+#         fname_time = model_obj.wbm_obj.save_folder_runtime + f'runtime_SKL_nCG_{n_cg}_{time_SKL}.csv'
+#         np.savetxt(fname_time, np.array([model_obj.time_SKL]), fmt='%1.8f')
+#         print(f'runtime_SKL : {time_SKL}')
+#
+#
+# def get_similarity_WMHD(model_obj, target_wf_list, weight_type='type_2', m=1, s_out_rate=0.1):
+#     param_str_key = f'{weight_type}, {m}, {s_out_rate}'
+#     model_obj.update_dict_sim_val(target_wf_list,
+#                                   sim_method='WMH',
+#                                   weight_type=weight_type, m=m, s_out_rate=s_out_rate)
+#     if not model_obj.load_check_wmhd:
+#         runtime_wmhd = model_obj.runtime_dict['runtime_wmhd_'+param_str_key]
+#         fname_time = f'runtime_WMHD_{weight_type}_{m}_{s_out_rate}_{runtime_wmhd}.csv'
+#         fname_time = model_obj.wbm_obj.save_folder_runtime + fname_time
+#         np.savetxt(fname_time, np.array([runtime_wmhd]))
+#         print(f'runtime_WMHD (weight_type: {weight_type} m:{m} s_out_rate: {s_out_rate}) {runtime_wmhd}')
+
+
 def save_list(list_obj, file_name, folder_name):
     fname = folder_name + file_name
     outfile = open(fname, 'wb')
@@ -175,62 +235,6 @@ def seriation(Z, N, cur_index):
         return seriation(Z, N, left) + seriation(Z, N, right)
 
 
-def get_similarity_euclidean(model_obj, target_wf_list):
-    time_start = time.time()
-    model_obj.update_dict_sim_val(target_wf_list, sim_method='EUC')
-    time_end = time.time()
-    time_EUC = np.round(time_end - time_start, 3)
-    model_obj.runtime_dict['runtime_EUC'] = time_EUC
-    print(f'runtime_EUC : {time_EUC}')
-
-
-def get_similarity_JSD(model_obj, target_wf_list, n_cg=9, cov_type='real', linkage_method='complete'):
-    model_obj.get_dpgmm()
-    model_obj.get_skldm(linkage_method=linkage_method)
-    model_obj.get_cg(n_cg=n_cg, cov_type=cov_type)
-    time_start = time.time()
-    model_obj.update_dict_sim_val(target_wf_list, sim_method='JSD')
-    time_end = time.time()
-
-    if not model_obj.load_check_dpgmm:
-        time_JSD = np.round(time_end - time_start
-                            + model_obj.runtime_dict['runtime_dpgmm']
-                            + model_obj.runtime_dict['runtime_skldm']
-                            + model_obj.runtime_dict[f'runtime_cg_{n_cg}'], 3)
-        model_obj.runtime_dict[f'runtime_JSD_nCG_{n_cg}'] = time_JSD
-        fname_time = model_obj.wbm_obj.save_folder_runtime + f'runtime_JSD_{n_cg}_{time_JSD}.csv'
-        np.savetxt(fname_time, np.array([model_obj.runtime_total_JSD]))
-        print(f'runtime_JSD : {time_JSD}')
-
-
-def get_similarity_SKL(model_obj, target_wf_list, n_cg=9, linkage_method='complete'):
-    model_obj.get_dpgmm()
-    model_obj.get_skldm(linkage_method=linkage_method)
-    model_obj.get_cg(n_cg=n_cg)
-    time_start = time.time()
-    model_obj.update_dict_sim_val(target_wf_list, sim_method='SKL')
-    time_end = time.time()
-
-    if not model_obj.load_check_dpgmm:
-        time_SKL = np.round(time_end - time_start
-                            + model_obj.runtime_dict['runtime_dpgmm']
-                            + model_obj.runtime_dict['runtime_skldm']
-                            + model_obj.runtime_dict[f'runtime_cg_{n_cg}'], 3)
-        model_obj.runtime_dict[f'runtime_SKL_nCG_{n_cg}'] = time_SKL
-        print(f'runtime_SKL : {time_SKL}')
-
-
-def get_similarity_WMHD(model_obj, target_wf_list, weight_type='type_2', m=1, s_out_rate=0.1):
-    param_str_key = f'{weight_type}, {m}, {s_out_rate}'
-    model_obj.update_dict_sim_val(target_wf_list,
-                                  sim_method='WMH',
-                                  weight_type=weight_type, m=m, s_out_rate=s_out_rate)
-    if not model_obj.load_check_wmhd:
-        runtime_wmhd = model_obj.runtime_dict['runtime_wmhd_'+param_str_key]
-        fname_time = f'runtime_WMHD_{weight_type}_{m}_{s_out_rate}_{runtime_wmhd}.csv'
-        fname_time = model_obj.wbm_obj.save_folder_runtime + fname_time
-        np.savetxt(fname_time, np.array([runtime_wmhd]))
-        print(f'runtime_WMHD (weight_type: {weight_type} m:{m} s_out_rate: {s_out_rate}) {runtime_wmhd}')
 
 
 def plot_roc_curve(sim_score_dict, target_wf_list):
