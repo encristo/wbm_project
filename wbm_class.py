@@ -13,6 +13,7 @@ from scipy.spatial.distance import euclidean, squareform, cdist, pdist
 from sklearn.metrics import confusion_matrix, auc
 from sklearn.covariance import empirical_covariance
 from numpy.random import multivariate_normal as mvn
+from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 
 
 class WM811K_DATASET:
@@ -432,6 +433,93 @@ class DPGMM_MC:
             fig.savefig(fname)
         plt.show()
 
+    def plot_polar_alone(self, contour=False, figsize=(4, 4), save=True, save_format='pdf'):
+
+        fig, axs = plt.subplots(figsize=figsize)
+        axs.scatter(self.data[:, 0], self.data[:, 1], c=self.idxClusterAssignment, marker='.', cmap='rainbow')
+        axs.scatter(self.paramClusterMu.T[0], self.paramClusterMu.T[1], c='w', marker='*')
+        axs.set_xlim(self.min_t - self.offset_t, self.max_t + self.offset_t)
+        axs.set_ylim(self.min_r - self.offset_r, self.max_r + self.offset_r)
+
+        axs.get_xaxis().set_visible(False)
+        axs.get_yaxis().set_visible(False)
+        axs.set_facecolor('#a9a9a9')
+
+        if contour:
+            for clst, cnt in enumerate(self.cntClusterAssignment):
+                if cnt > 2:
+                    mu = self.paramClusterMu[clst]
+                    cov = self.paramClusterSigma[clst]
+                    gridX = np.arange(0 - self.offset_t, self.max_t + self.offset_t, (self.max_t + self.offset_t) / 100)
+                    gridY = np.arange(0 - self.offset_r, self.max_r + self.offset_r, (self.max_r + self.offset_r) / 100)
+                    meshX, meshY = np.meshgrid(gridX, gridY)
+
+                    Z = np.zeros(shape=(len(gridY), len(gridX)), dtype=float)
+                    for itr1 in range(len(meshX)):
+                        for itr2 in range(len(meshX[itr1])):
+                            Z[itr1][itr2] = stats.multivariate_normal.pdf([meshX[itr1][itr2],
+                                                                           meshY[itr1][itr2]],
+                                                                          mean=mu, cov=cov)
+                    axs.contour(meshX, meshY, Z, 1, colors='k', linewidths=1)
+        if save:
+            fname = self.wbm_obj.save_folder_figures + f'dpgmm_result_polar_alone{self.wbm_id}.{save_format}'
+            fig.savefig(fname)
+        plt.show()
+        return axs
+
+    def plot_xy_alone(self, figsize=(4, 4)):
+
+        fig, axs = plt.subplots(figsize=figsize)
+
+        axs.scatter(self.data_xy[:, 0], self.data_xy[:, 1], c=self.idxClusterAssignment, marker='.', cmap='rainbow')
+        axs.set_xlim(self.min_x - self.offset_x, self.max_x + self.offset_x)
+        axs.set_ylim(self.min_y - self.offset_y, self.max_y + self.offset_y)
+
+        axs.get_xaxis().set_visible(False)
+        axs.get_yaxis().set_visible(False)
+        axs.set_facecolor('#a9a9a9')
+
+        plt.show()
+
+    def plot_polar_and_xy(self, figsize=(4, 4), contour=True):
+
+        fig, axs = plt.subplots(figsize=figsize)
+
+        axs.scatter(self.data_xy[:, 0], self.data_xy[:, 1], c=self.idxClusterAssignment, marker='.', cmap='rainbow')
+        axs.set_xlim(self.min_x - self.offset_x, self.max_x + self.offset_x)
+        axs.set_ylim(self.min_y - self.offset_y, self.max_y + self.offset_y)
+
+        axs.get_xaxis().set_visible(False)
+        axs.get_yaxis().set_visible(False)
+        axs.set_facecolor('#a9a9a9')
+
+        fig, axs = plt.subplots(figsize=figsize)
+        axs.scatter(self.data[:, 0], self.data[:, 1], c=self.idxClusterAssignment, marker='.', cmap='rainbow')
+        axs.scatter(self.paramClusterMu.T[0], self.paramClusterMu.T[1], c='w', marker='*')
+        axs.set_xlim(self.min_t - self.offset_t, self.max_t + self.offset_t)
+        axs.set_ylim(self.min_r - self.offset_r, self.max_r + self.offset_r)
+
+        axs.get_xaxis().set_visible(False)
+        axs.get_yaxis().set_visible(False)
+        axs.set_facecolor('#a9a9a9')
+
+        if contour:
+            for clst, cnt in enumerate(self.cntClusterAssignment):
+                if cnt > 2:
+                    mu = self.paramClusterMu[clst]
+                    cov = self.paramClusterSigma[clst]
+                    gridX = np.arange(0 - self.offset_t, self.max_t + self.offset_t, (self.max_t + self.offset_t) / 100)
+                    gridY = np.arange(0 - self.offset_r, self.max_r + self.offset_r, (self.max_r + self.offset_r) / 100)
+                    meshX, meshY = np.meshgrid(gridX, gridY)
+
+                    Z = np.zeros(shape=(len(gridY), len(gridX)), dtype=float)
+                    for itr1 in range(len(meshX)):
+                        for itr2 in range(len(meshX[itr1])):
+                            Z[itr1][itr2] = stats.multivariate_normal.pdf([meshX[itr1][itr2],
+                                                                           meshY[itr1][itr2]],
+                                                                          mean=mu, cov=cov)
+                    axs.contour(meshX, meshY, Z, 1, colors='k', linewidths=1)
+
 
 class DPGMM_VI:
     def __init__(self, wbm_id, wbm_obj, coordinate='polar'):
@@ -661,6 +749,7 @@ class WBM:
         self.data_len = len(self.data)
         self.label_list = label_list[self.fail_rate_mask_seq]
         self.label_name = label_name[np.unique(self.label_list)]
+        self.unique_label = list(set(self.label_list))
         self.label_cnt_dict = {i: (self.label_list == i).sum() for i in np.unique(self.label_list)}
         self.fail_rate_list2 = self.fail_rate_list[self.fail_rate_mask_seq]
 
@@ -720,11 +809,9 @@ class WBM:
         self.tr_valid = self.tr[self.sample_zero_one.flatten() != 0]
         self.xy_valid = self.xy[self.sample_zero_one.flatten() != 0]
 
-        self.xy_valid_center = self.xy_valid.mean(axis=0)
-        euc_dist_from_center_arr = np.empty(self.n_valid)
-        for i in range(self.n_valid):
-            euc_dist_from_center_arr[i] = euclidean(self.xy_valid[i], self.xy_valid_center)
-        self.euc_dist_max = max(euc_dist_from_center_arr)
+        self.euc_dist_from_center_valid = cdist(self.xy_valid, np.array([0, 0]).reshape(1, -1))
+        self.euc_dist_max = max(self.euc_dist_from_center_valid)
+        self.euc_dist_mtx = cdist(self.xy_valid, self.xy_valid)
 
         self.pad_map = np.pad(np.ones(self.map_shape), pad_width=1)
         self.pad_map_shape = self.pad_map.shape
@@ -780,17 +867,32 @@ class WBM:
         self.map_pad_edge = np.logical_or(map_pad_edge_tran1, map_pad_edge_tran2) * 1
         self.xy_pad_valid = self.xy_pad[self.map_pad_edge.flatten() == 1]
         self.n_valid_pad = self.map_pad_edge.sum()
+        self.total_fail = (self.data == 2).sum()
 
-        self.save_folder_results = make_sub_folder('results', f'wbm_{self.map_shape}_{self.n_valid}_{self.data_len}')
+        self.save_folder_results = make_sub_folder('results',
+                                                   f'wbm_{self.map_shape}_{self.n_valid}_{self.data_len}_{self.total_fail}')
+        self.save_folder_wmhd_values = make_sub_folder(self.save_folder_results, 'wmhd_values')
         self.save_folder_figures = make_sub_folder(self.save_folder_results, 'figures')
         self.save_folder_scores = make_sub_folder(self.save_folder_results, 'scores')
         self.save_folder_runtime = make_sub_folder(self.save_folder_results, 'runtime')
 
+    def get_target_wf_group_list(self, n_groups=10, save=False):
+        self.target_wf_group_list = np.zeros((len(self.unique_label), n_groups), dtype='int')
+        for i, v in enumerate(self.unique_label):
+            self.target_wf_group_list[i] = np.random.choice(np.arange(self.data_len)[self.label_list == v],
+                                                            n_groups,
+                                                            replace=True)
+
+        self.target_wf_group_list = self.target_wf_group_list.T.tolist()
+        list_id = str(self.target_wf_group_list[0])[1:-1].replace(', ', '_')
+        if save:
+            fname = self.save_folder_results + f'target_wf_group_list_{list_id}.csv'
+            np.savetxt(fname, np.array(self.target_wf_group_list), delimiter=',', fmt='%1.8f')
+
     def plot_sample_imshow(self, wbm_id):
         fig, axs = plt.subplots(figsize=(3, 3))
         axs.imshow(self.data_with_nan[wbm_id].reshape(self.map_shape), aspect='auto', interpolation='none',
-                   cmap='binary')
-        axs.set_facecolor('gray')
+                   cmap=ListedColormap(["lightgray", "red"]))
         axs.get_xaxis().set_visible(False)
         axs.get_yaxis().set_visible(False)
         plt.show()
@@ -821,8 +923,7 @@ class WBM:
         fig, axs = plt.subplots(1, n_args, figsize=(n_args * 3, 3))
         for i, wbm_id in enumerate(args):
             axs[i].imshow(self.data_with_nan[wbm_id].reshape(self.map_shape), aspect='auto', interpolation='none',
-                          cmap='binary')
-            axs[i].set_facecolor('gray')
+                          cmap=ListedColormap(["lightgray", "red"]))
             axs[i].get_xaxis().set_visible(False)
             axs[i].get_yaxis().set_visible(False)
         plt.show()
@@ -931,32 +1032,18 @@ class WBM:
         defect_idx = self.data_without_nan[wbm_id] == 1  # n_valid 기준 index
         xy = self.get_xy_points(wbm_id)  # coordinate of defective dies (n_defect, 2)
         XY = self.xy[~np.isnan(self.data_with_nan[0])]  # coordinate of all dies (n_valid, 2)
-        beta = 1 / (self.r[self.data[wbm_id] == 2].sum() / self.n_valid)
+        beta = 1 / (self.euc_dist_from_center_valid[self.data_without_nan[wbm_id] == 1].sum() / self.n_valid)
 
-        mountain_val = np.empty(len(XY))
-        for i in range(len(XY)):
-            m_val = 0
-            point_i = XY[i]
-            for j in range(len(xy)):
-                point_j = xy[j]
-                m_val += np.exp(-1 * m * beta * euclidean(point_i, point_j))
-            mountain_val[i] = m_val
+        mountain_val = np.exp(cdist(XY, xy)*beta*m*(-1)).sum(axis=1)
         mountain_val_defect_only = mountain_val[defect_idx]
         return mountain_val_defect_only, mountain_val
 
     def mountain_for_kingmove(self, wbm_id, m=1):
         xy = self.xy_pad[self.data_zero_padded[wbm_id] == 2]
         XY = self.xy_pad_valid
-        beta = 1 / (self.r[self.data[wbm_id] == 2].sum() / self.n_valid_pad)
+        beta = 1 / (self.euc_dist_from_center_valid[self.data_without_nan[wbm_id] == 1].sum() / self.n_valid)
 
-        mountain_pad_valid = np.empty(len(XY))
-        for i in range(len(XY)):
-            m_val = 0
-            point_i = XY[i]
-            for j in range(len(xy)):
-                point_j = xy[j]
-                m_val += np.exp(-1 * m * beta * euclidean(point_i, point_j))
-            mountain_pad_valid[i] = m_val
+        mountain_pad_valid = np.exp(cdist(XY, xy)*beta*m*(-1)).sum(axis=1)
         mountain_pad_mtx = np.zeros(self.map_len_zero_padded)
         mountain_pad_mtx[self.map_pad_edge.flatten() == 1] = mountain_pad_valid
         mountain_pad_mtx = mountain_pad_mtx.reshape(self.map_shape_zero_padded)
@@ -965,19 +1052,15 @@ class WBM:
     def wmhd_sim_calc(self, target_id, compared_id, weight_type='type_0', m=1, s_out_rate=False):
         xy_target = self.get_xy_points(target_id)
         xy_compare = self.get_xy_points(compared_id)
+        wbm_bool_target = np.array(self.data_without_nan[target_id], dtype='bool')
+        wbm_bool_compare = np.array(self.data_without_nan[compared_id], dtype='bool')
         n_target = len(xy_target)
-        s_out = 0
-        out_idx_arr = np.ones(len(xy_target))
+        out_idx_arr = np.array(np.ones(len(xy_target)), dtype='bool')
         if s_out_rate:
-            s_out = self.max_r * s_out_rate
-            for i in range(len(xy_target)):
-                a = xy_target[i]
-                euc_dist_arr = np.empty(len(xy_compare))
-                for k in range(len(xy_compare)):
-                    b = xy_compare[k]
-                    euc_dist_arr[k] = euclidean(a, b)
-                out_idx_arr[i] = min(euc_dist_arr)
-            out_idx_arr = out_idx_arr < s_out
+            s_out = self.euc_dist_max * s_out_rate
+            out_idx_arr = self.euc_dist_mtx[wbm_bool_target].T[wbm_bool_compare].T.min(axis=1) < s_out
+        else:
+            s_out = 0
         xy_target = xy_target[out_idx_arr == True]
         n_out = n_target - len(xy_target)
         n_target = n_target - n_out
@@ -1034,9 +1117,12 @@ class WBM:
         sim_val = h + (n_out * s_out)
         return sim_val
 
-    def wmhd_sim_calc_all(self, target_id, weight_type='type_2', m=1, s_out_rate=False):
+    def wmhd_sim_calc_all(self, target_id, weight_type='type_2', m=1, s_out_rate=False, wmhd_tqdm=True):
         wmhd_sim_res = []
-        pbar = tqdm(range(self.data_len))
+        if wmhd_tqdm:
+            pbar = tqdm(range(self.data_len))
+        else:
+            pbar = range(self.data_len)
         for compared_id in pbar:
             wmhd_sim_res.append(
                 self.wmhd_sim_calc(target_id, compared_id, weight_type=weight_type, m=m, s_out_rate=s_out_rate))
@@ -1151,11 +1237,11 @@ class MODEL:
             with open(self.fname_runtime_dict, 'w') as fw:
                 fw.write(json.dumps({'0_init': get_now_str()}, indent=4, sort_keys=True))
 
-    def get_dpgmm(self, infer_method='vi'):
+    def get_dpgmm(self, infer_method='vi', load=True, save=True):
         self.dpgmm_infer_method = infer_method
         self.fname_dpgmm_list = f'dpgmm_list_{self.dpgmm_infer_method}'
         # 기존에 만든 파일이 있을 경우
-        if os.path.isfile(self.wbm_obj.save_folder_results + self.fname_dpgmm_list):
+        if load & os.path.isfile(self.wbm_obj.save_folder_results + self.fname_dpgmm_list):
             self.load_check_dpgmm = True
             infile = open(self.wbm_obj.save_folder_results + self.fname_dpgmm_list, 'rb')
             self.dpgmm_list = pickle.load(infile, encoding='latin1')
@@ -1177,9 +1263,10 @@ class MODEL:
             time_dpgmm_end = time.time()
             time_dpgmm = np.round(time_dpgmm_end - time_dpgmm_start, 3)
             self.runtime_dict['dpgmm'] = {self.dpgmm_infer_method: time_dpgmm, 'end_time': get_now_str()}
-            save_list(self.dpgmm_list, self.fname_dpgmm_list, self.wbm_obj.save_folder_results)
+            if save:
+                save_list(self.dpgmm_list, self.fname_dpgmm_list, self.wbm_obj.save_folder_results)
 
-    def get_skldm(self, linkage_method='complete', min_defects=2):
+    def get_skldm(self, linkage_method='complete', min_defects=2, load=True, save=True):
         self.linkage_method = linkage_method
         self.cntClusters_list = []
         self.mean_list = []
@@ -1201,7 +1288,7 @@ class MODEL:
         self.cov_arr = np.array(self.cov_list)
 
         self.fname_skldm = f'skldm_{self.dpgmm_infer_method}'
-        if os.path.isfile(self.wbm_obj.save_folder_results + self.fname_skldm):
+        if load & os.path.isfile(self.wbm_obj.save_folder_results + self.fname_skldm):
             self.load_check_skldm = True
             infile = open(self.wbm_obj.save_folder_results + self.fname_skldm, 'rb')
             self.skldm = pickle.load(infile, encoding='latin1')
@@ -1213,7 +1300,8 @@ class MODEL:
             time_skldm_end = time.time()
             time_skldm = np.round(time_skldm_end - time_skldm_start, 3)
             self.runtime_dict['skldm'] = {self.dpgmm_infer_method: time_skldm, 'end_time': get_now_str()}
-            save_list(self.skldm, self.fname_skldm, self.wbm_obj.save_folder_results)
+            if save:
+                save_list(self.skldm, self.fname_skldm, self.wbm_obj.save_folder_results)
 
         for i in range(len(self.skldm)):
             self.skldm[i, i] = 0
@@ -1295,13 +1383,16 @@ class MODEL:
         plt.show()
 
     def update_sim_mtx_dict_euclidean(self):
+        time_start = time.time()
         self.sim_mtx_dict = {'EUC': squareform(pdist(self.wbm_obj.data_without_nan))}
+        time_end = time.time()
+        self.runtime_dict['update_sim_mtx_dict_euclidean'] = time_end - time_start
 
     def update_sim_mtx_dict_JSD(self):
+        time_start = time.time()
         self.sim_mtx_dict = {'JSD': get_JSD_cat_mtx(self.cg.weight_vector_arr)}
-
-    def update_sim_mtx_dict_SKL(self):
-        self.sim_mtx_dict = {'SKL': get_sym_KLD_cat_mtx(self.cg.weight_vector_arr)}
+        time_end = time.time()
+        self.runtime_dict['update_sim_mtx_dict_JSD'] = time_end - time_start
 
     def plot_cg_mean_cov(self, contour=True, save=True, save_format='pdf'):
 
@@ -1500,7 +1591,7 @@ class MODEL:
 
     def calc_sim_res_score(self, sim_rank, rank_interval):
         true_label_sim_rank_sorted = self.wbm_obj.label_list[sim_rank]
-        target_label = true_label_sim_rank_sorted[0]
+        target_label = int(true_label_sim_rank_sorted[0])
         target_label_count = self.wbm_obj.label_cnt_dict[target_label]
 
         tpr = []
@@ -1535,47 +1626,48 @@ class MODEL:
         acc = (true_label_sim_rank_sorted == target_label)[1: target_label_count].mean().round(4)
         return acc, pi, pi_max, tpr, fpr, specificity_list, auc(fpr, tpr).round(4)
 
-    def update_dict_sim_val(self, target_wf_list, sim_method='JSD', weight_type='type_2', m=1, s_out_rate=0.1):
-
-        time_start = time.time()
+    def update_dict_sim_val(self, target_wf_list, sim_method='JSD',
+                            weight_type='type_2', m=1, s_out_rate=0.1, wmhd_tqdm=True):
+        target_wf_list_id = str(target_wf_list)[2:-2].replace(', ', '_')
 
         if sim_method == 'JSD':
             key_n_cg = f'n_cg:{self.n_cg}'
             self.update_sim_mtx_dict_JSD()
-            time_end = time.time()
             self.sim_rank_dict[sim_method] = {}
             self.sim_rank_dict[sim_method][key_n_cg] = {}
             self.sim_rank_dict[sim_method][key_n_cg]['value'] = {}
+            time_start = time.time()
             for target_wf in target_wf_list:
                 self.sim_rank_dict[sim_method][key_n_cg]['value'][target_wf] = self.sim_mtx_dict[sim_method][target_wf]
-
+            time_end = time.time()
             if not (self.load_check_dpgmm and self.load_check_skldm):
                 time_JSD = np.round(time_end - time_start
                                     + self.runtime_dict['dpgmm'][self.dpgmm_infer_method]
                                     + self.runtime_dict['skldm'][self.dpgmm_infer_method]
-                                    + self.runtime_dict['cg'][self.dpgmm_infer_method][self.n_cg],
+                                    + self.runtime_dict['cg'][self.dpgmm_infer_method][self.n_cg]
+                                    + self.runtime_dict['update_sim_mtx_dict_JSD'],
                                     3)
                 self.runtime_dict['JSD'] = {'para': {'n_cg': self.n_cg,
                                                      'cov_type': self.cov_type,
                                                      'linkage_method': self.linkage_method},
-                                            'runtime': time_JSD,
-                                            'target_wf_list': target_wf_list}
-                fname_time = self.wbm_obj.save_folder_runtime + f'runtime_JSD_nCG_' \
-                                                                f'{self.dpgmm_infer_method}_' \
-                                                                f'{self.n_cg}_{time_JSD}.csv'
-                np.savetxt(fname_time, np.array([time_JSD]), fmt='%1.8f')
-                print(f'runtime_JSD : {time_JSD}')
+                                            'runtime_pure': time_end - time_start,
+                                            'runtime_total': time_JSD}
+            else:
+                self.runtime_dict['JSD'] = {'runtime_pure': np.round(time_end - time_start, 4)}
 
         elif sim_method == 'EUC':
             self.update_sim_mtx_dict_euclidean()
-            time_end = time.time()
+
             self.sim_rank_dict[sim_method] = {}
             self.sim_rank_dict[sim_method]['None'] = {}
             self.sim_rank_dict[sim_method]['None']['value'] = {}
+            time_start = time.time()
             for target_wf in target_wf_list:
                 self.sim_rank_dict[sim_method]['None']['value'][target_wf] = self.sim_mtx_dict[sim_method][target_wf]
-            time_EUC = time_end - time_start
-            self.runtime_dict['EUC'] = {'runtime': time_EUC, 'target_wf_list': target_wf_list}
+            time_end = time.time()
+            time_EUC = np.round(time_end - time_start, 4)
+            self.runtime_dict['EUC'] = {'runtime_pure': time_EUC,
+                                        'runtime_total': self.runtime_dict['update_sim_mtx_dict_euclidean']+time_EUC}
 
         # IN CASE WMH
         elif sim_method == 'WMH':
@@ -1583,19 +1675,24 @@ class MODEL:
             self.sim_rank_dict[sim_method][param_str_key] = {}
             self.sim_rank_dict[sim_method][param_str_key]['value'] = {}
 
+            time_start = time.time()
             for target_wf in target_wf_list:
                 time_start_for_wf = time.time()
-                fname_wmhd_sim_val = f'wmhd_sim_val_{weight_type}_{m}_{s_out_rate}_wf_{target_wf}.csv'
-                if os.path.isfile(self.wbm_obj.save_folder_results + fname_wmhd_sim_val):
+                fname_wmhd_sim_val = f'wmhd_sim_val_' \
+                                     f'{weight_type}_m_{m}_sout_{s_out_rate}_id_' \
+                                     f'{target_wf_list_id}_wf_{target_wf}.csv'
+                if os.path.isfile(self.wbm_obj.save_folder_wmhd_values + fname_wmhd_sim_val):
                     self.load_check_wmhd = True
-                    wmhd_sim_val = np.loadtxt(self.wbm_obj.save_folder_results + fname_wmhd_sim_val, delimiter=',')
+                    wmhd_sim_val = np.loadtxt(self.wbm_obj.save_folder_wmhd_values + fname_wmhd_sim_val, delimiter=',')
                     self.sim_rank_dict[sim_method][param_str_key]['value'][target_wf] = wmhd_sim_val
                 else:
                     self.load_check_wmhd = False
-                    wmhd_sim_val = self.wbm_obj.wmhd_sim_calc_all(target_wf, weight_type=weight_type, m=m,
-                                                                  s_out_rate=s_out_rate)
+                    wmhd_sim_val = self.wbm_obj.wmhd_sim_calc_all(target_wf,
+                                                                  weight_type=weight_type,
+                                                                  m=m, s_out_rate=s_out_rate,
+                                                                  wmhd_tqdm=wmhd_tqdm)
                     self.sim_rank_dict[sim_method][param_str_key]['value'][target_wf] = wmhd_sim_val
-                    np.savetxt(self.wbm_obj.save_folder_results + fname_wmhd_sim_val, wmhd_sim_val,
+                    np.savetxt(self.wbm_obj.save_folder_wmhd_values + fname_wmhd_sim_val, wmhd_sim_val,
                                delimiter=',', fmt='%1.8f')
                     time_end_for_wf = time.time()
                     time_wmhd_for_wf = np.round(time_end_for_wf - time_start_for_wf, 3)
@@ -1605,7 +1702,7 @@ class MODEL:
                 time_wmhd = np.round(time_end - time_start, 3)
                 self.runtime_dict['WMHD'] = {param_str_key: {'total_time': time_wmhd}}
 
-    def update_dict_sim_score(self, rank_interval=1):
+    def update_dict_sim_score(self, target_wf_list, rank_interval=1):
         self.label_cnt_dict = self.wbm_obj.label_cnt_dict
         self.xticks = np.array([i for i in range(rank_interval, self.wbm_obj.data_len, rank_interval)])
 
@@ -1625,7 +1722,7 @@ class MODEL:
                 self.sim_score_dict[sim_method][para]['specificity'] = {}
                 self.sim_score_dict[sim_method][para]['xticks'] = self.xticks.tolist()
                 self.sim_score_dict[sim_method][para]['n_target_wf'] = n_target_wf
-                self.sim_score_dict[sim_method][para]['target_wf_list'] = self.wbm_obj.target_wf_list
+                self.sim_score_dict[sim_method][para]['target_wf_list'] = target_wf_list
                 acc_avg = 0
                 pi_max_avg = 0
                 auc_avg = 0
