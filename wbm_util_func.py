@@ -74,8 +74,7 @@ from tqdm import *
 #         print(f'runtime_WMHD (weight_type: {weight_type} m:{m} s_out_rate: {s_out_rate}) {runtime_wmhd}')
 
 
-def save_list(list_obj, file_name, folder_name):
-    fname = folder_name + file_name
+def save_list(list_obj, fname):
     outfile = open(fname, 'wb')
     pickle.dump(list_obj, outfile)
     outfile.close()

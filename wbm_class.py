@@ -13,7 +13,7 @@ from scipy.spatial.distance import euclidean, squareform, cdist, pdist
 from sklearn.metrics import confusion_matrix, auc
 from sklearn.covariance import empirical_covariance
 from numpy.random import multivariate_normal as mvn
-from matplotlib.colors import ListedColormap, LinearSegmentedColormap
+from matplotlib.colors import ListedColormap
 
 
 class WM811K_DATASET:
@@ -391,7 +391,7 @@ class DPGMM_MC:
             fig.savefig(fname)
         plt.show()
 
-    def plot_iter(self, itr, contour=True, title=True, save=False, save_format='png', figsize=(9, 3)):
+    def plot_iter(self, itr, contour=True, save=False, save_format='png', figsize=(9, 3)):
         para_Mu = np.vstack(self.paramClusterMu).reshape(-1, 2)
         para_Sigma = np.vstack(self.paramClusterSigma).reshape((-1, 2, 2))
         fig, axs = plt.subplots(1, 3, figsize=figsize)
@@ -876,18 +876,22 @@ class WBM:
         self.save_folder_scores = make_sub_folder(self.save_folder_results, 'scores')
         self.save_folder_runtime = make_sub_folder(self.save_folder_results, 'runtime')
 
-    def get_target_wf_group_list(self, n_groups=10, save=False):
-        self.target_wf_group_list = np.zeros((len(self.unique_label), n_groups), dtype='int')
-        for i, v in enumerate(self.unique_label):
-            self.target_wf_group_list[i] = np.random.choice(np.arange(self.data_len)[self.label_list == v],
-                                                            n_groups,
-                                                            replace=True)
+    def get_target_wf_group_list(self, load=False, n_groups=10, save=False, fname=''):
+        if load:
+            fname = self.save_folder_results + f'{fname}.csv'
+            self.target_wf_group_list = np.loadtxt(fname, dtype='uint8', delimiter=',').tolist()
+        else:
+            self.target_wf_group_list = np.zeros((len(self.unique_label), n_groups), dtype='int')
+            for i, v in enumerate(self.unique_label):
+                self.target_wf_group_list[i] = np.random.choice(np.arange(self.data_len)[self.label_list == v],
+                                                                n_groups,
+                                                                replace=True)
 
-        self.target_wf_group_list = self.target_wf_group_list.T.tolist()
-        list_id = str(self.target_wf_group_list[0])[1:-1].replace(', ', '_')
-        if save:
-            fname = self.save_folder_results + f'target_wf_group_list_{list_id}.csv'
-            np.savetxt(fname, np.array(self.target_wf_group_list), delimiter=',', fmt='%1.8f')
+            self.target_wf_group_list = self.target_wf_group_list.T.tolist()
+            list_id = str(self.target_wf_group_list[0])[1:-1].replace(', ', '_')
+            if save:
+                fname = self.save_folder_results + f'target_wf_group_list_{list_id}.csv'
+                np.savetxt(fname, np.array(self.target_wf_group_list), delimiter=',', fmt='%1.8f')
 
     def plot_sample_imshow(self, wbm_id):
         fig, axs = plt.subplots(figsize=(3, 3))
@@ -1034,7 +1038,7 @@ class WBM:
         XY = self.xy[~np.isnan(self.data_with_nan[0])]  # coordinate of all dies (n_valid, 2)
         beta = 1 / (self.euc_dist_from_center_valid[self.data_without_nan[wbm_id] == 1].sum() / self.n_valid)
 
-        mountain_val = np.exp(cdist(XY, xy)*beta*m*(-1)).sum(axis=1)
+        mountain_val = np.exp(cdist(XY, xy) * beta * m * (-1)).sum(axis=1)
         mountain_val_defect_only = mountain_val[defect_idx]
         return mountain_val_defect_only, mountain_val
 
@@ -1043,7 +1047,7 @@ class WBM:
         XY = self.xy_pad_valid
         beta = 1 / (self.euc_dist_from_center_valid[self.data_without_nan[wbm_id] == 1].sum() / self.n_valid)
 
-        mountain_pad_valid = np.exp(cdist(XY, xy)*beta*m*(-1)).sum(axis=1)
+        mountain_pad_valid = np.exp(cdist(XY, xy) * beta * m * (-1)).sum(axis=1)
         mountain_pad_mtx = np.zeros(self.map_len_zero_padded)
         mountain_pad_mtx[self.map_pad_edge.flatten() == 1] = mountain_pad_valid
         mountain_pad_mtx = mountain_pad_mtx.reshape(self.map_shape_zero_padded)
@@ -1121,14 +1125,17 @@ class WBM:
         wmhd_sim_res = []
         if wmhd_tqdm:
             pbar = tqdm(range(self.data_len))
+            for compared_id in pbar:
+                wmhd_sim_res.append(
+                    self.wmhd_sim_calc(target_id, compared_id, weight_type=weight_type, m=m, s_out_rate=s_out_rate))
+                pbar.set_description(
+                    f'm:{m:.2f} s_out_rate:{s_out_rate:.3f} target wf : {target_id:4}, compared_wf : {compared_id:4}')
         else:
-            pbar = range(self.data_len)
-        for compared_id in pbar:
-            wmhd_sim_res.append(
-                self.wmhd_sim_calc(target_id, compared_id, weight_type=weight_type, m=m, s_out_rate=s_out_rate))
-            pbar.set_description(
-                f'WMHD {weight_type} m:{m} s_out_rate:{s_out_rate} target wf : {target_id}, compared_wf : {compared_id}')
-        return np.array(wmhd_sim_res)
+            for compared_id in range(self.data_len):
+                wmhd_sim_res.append(
+                    self.wmhd_sim_calc(target_id, compared_id, weight_type=weight_type, m=m, s_out_rate=s_out_rate))
+
+        return np.array(wmhd_sim_res).flatten()
 
 
 class CG:
@@ -1264,7 +1271,7 @@ class MODEL:
             time_dpgmm = np.round(time_dpgmm_end - time_dpgmm_start, 3)
             self.runtime_dict['dpgmm'] = {self.dpgmm_infer_method: time_dpgmm, 'end_time': get_now_str()}
             if save:
-                save_list(self.dpgmm_list, self.fname_dpgmm_list, self.wbm_obj.save_folder_results)
+                save_list(self.dpgmm_list, self.wbm_obj.save_folder_results + self.fname_dpgmm_list)
 
     def get_skldm(self, linkage_method='complete', min_defects=2, load=True, save=True):
         self.linkage_method = linkage_method
@@ -1301,7 +1308,7 @@ class MODEL:
             time_skldm = np.round(time_skldm_end - time_skldm_start, 3)
             self.runtime_dict['skldm'] = {self.dpgmm_infer_method: time_skldm, 'end_time': get_now_str()}
             if save:
-                save_list(self.skldm, self.fname_skldm, self.wbm_obj.save_folder_results)
+                save_list(self.skldm, self.wbm_obj.save_folder_results + self.fname_skldm)
 
         for i in range(len(self.skldm)):
             self.skldm[i, i] = 0
@@ -1626,81 +1633,76 @@ class MODEL:
         acc = (true_label_sim_rank_sorted == target_label)[1: target_label_count].mean().round(4)
         return acc, pi, pi_max, tpr, fpr, specificity_list, auc(fpr, tpr).round(4)
 
-    def update_dict_sim_val(self, target_wf_list, sim_method='JSD',
-                            weight_type='type_2', m=1, s_out_rate=0.1, wmhd_tqdm=True):
-        target_wf_list_id = str(target_wf_list)[2:-2].replace(', ', '_')
+    def update_dict_sim_val_JSD(self, target_wf_list):
+        key_n_cg = f'n_cg:{self.n_cg}'
+        self.update_sim_mtx_dict_JSD()
+        self.sim_rank_dict['JSD'] = {}
+        self.sim_rank_dict['JSD'][key_n_cg] = {}
+        self.sim_rank_dict['JSD'][key_n_cg]['value'] = {}
+        time_start = time.time()
+        for target_wf in target_wf_list:
+            self.sim_rank_dict['JSD'][key_n_cg]['value'][target_wf] = self.sim_mtx_dict['JSD'][target_wf]
+        time_end = time.time()
+        if not (self.load_check_dpgmm and self.load_check_skldm):
+            time_JSD = np.round(time_end - time_start
+                                + self.runtime_dict['dpgmm'][self.dpgmm_infer_method]
+                                + self.runtime_dict['skldm'][self.dpgmm_infer_method]
+                                + self.runtime_dict['cg'][self.dpgmm_infer_method][self.n_cg]
+                                + self.runtime_dict['update_sim_mtx_dict_JSD'],
+                                3)
+            self.runtime_dict['JSD'] = {'para': {'n_cg': self.n_cg,
+                                                 'cov_type': self.cov_type,
+                                                 'linkage_method': self.linkage_method},
+                                        'runtime_pure': time_end - time_start,
+                                        'runtime_total': time_JSD}
+        else:
+            self.runtime_dict['JSD'] = {'runtime_pure': np.round(time_end - time_start, 4)}
 
-        if sim_method == 'JSD':
-            key_n_cg = f'n_cg:{self.n_cg}'
-            self.update_sim_mtx_dict_JSD()
-            self.sim_rank_dict[sim_method] = {}
-            self.sim_rank_dict[sim_method][key_n_cg] = {}
-            self.sim_rank_dict[sim_method][key_n_cg]['value'] = {}
-            time_start = time.time()
-            for target_wf in target_wf_list:
-                self.sim_rank_dict[sim_method][key_n_cg]['value'][target_wf] = self.sim_mtx_dict[sim_method][target_wf]
-            time_end = time.time()
-            if not (self.load_check_dpgmm and self.load_check_skldm):
-                time_JSD = np.round(time_end - time_start
-                                    + self.runtime_dict['dpgmm'][self.dpgmm_infer_method]
-                                    + self.runtime_dict['skldm'][self.dpgmm_infer_method]
-                                    + self.runtime_dict['cg'][self.dpgmm_infer_method][self.n_cg]
-                                    + self.runtime_dict['update_sim_mtx_dict_JSD'],
-                                    3)
-                self.runtime_dict['JSD'] = {'para': {'n_cg': self.n_cg,
-                                                     'cov_type': self.cov_type,
-                                                     'linkage_method': self.linkage_method},
-                                            'runtime_pure': time_end - time_start,
-                                            'runtime_total': time_JSD}
-            else:
-                self.runtime_dict['JSD'] = {'runtime_pure': np.round(time_end - time_start, 4)}
+    def update_dict_sim_val_EUC(self, target_wf_list):
+        self.update_sim_mtx_dict_euclidean()
+        self.sim_rank_dict['EUC'] = {}
+        self.sim_rank_dict['EUC']['None'] = {}
+        self.sim_rank_dict['EUC']['None']['value'] = {}
+        time_start = time.time()
+        for target_wf in target_wf_list:
+            self.sim_rank_dict['EUC']['None']['value'][target_wf] = self.sim_mtx_dict['EUC'][target_wf]
+        time_end = time.time()
+        time_EUC = np.round(time_end - time_start, 4)
+        self.runtime_dict['EUC'] = {'runtime_pure': time_EUC,
+                                    'runtime_total': self.runtime_dict['update_sim_mtx_dict_euclidean'] + time_EUC}
 
-        elif sim_method == 'EUC':
-            self.update_sim_mtx_dict_euclidean()
+    def update_dict_sim_val_WMHD(self, target_wf_list, weight_type='type_2', m=1, s_out_rate=0.1, wmhd_tqdm=True):
+        param_str_key = f'{weight_type}, {m:.2f}, {s_out_rate:.3f}'
+        self.sim_rank_dict['WMHD'][param_str_key] = {}
+        self.sim_rank_dict['WMHD'][param_str_key]['value'] = {}
+        target_wf_list_id = str(target_wf_list)[1:-1].replace(', ', '_')
+        fname_wmhd_sim_val = f'm_{m:.2f}_sout_{s_out_rate:.3f}_id_{target_wf_list_id}.csv'
 
-            self.sim_rank_dict[sim_method] = {}
-            self.sim_rank_dict[sim_method]['None'] = {}
-            self.sim_rank_dict[sim_method]['None']['value'] = {}
-            time_start = time.time()
-            for target_wf in target_wf_list:
-                self.sim_rank_dict[sim_method]['None']['value'][target_wf] = self.sim_mtx_dict[sim_method][target_wf]
-            time_end = time.time()
-            time_EUC = np.round(time_end - time_start, 4)
-            self.runtime_dict['EUC'] = {'runtime_pure': time_EUC,
-                                        'runtime_total': self.runtime_dict['update_sim_mtx_dict_euclidean']+time_EUC}
-
-        # IN CASE WMH
-        elif sim_method == 'WMH':
-            param_str_key = f'{weight_type}, {m}, {s_out_rate}'
-            self.sim_rank_dict[sim_method][param_str_key] = {}
-            self.sim_rank_dict[sim_method][param_str_key]['value'] = {}
-
-            time_start = time.time()
-            for target_wf in target_wf_list:
+        time_start = time.time()
+        if os.path.isfile(self.wbm_obj.save_folder_wmhd_values + fname_wmhd_sim_val):
+            self.load_check_wmhd = True
+            for i, target_wf in enumerate(target_wf_list):
+                wmhd_sim_val_arr = np.loadtxt(self.wbm_obj.save_folder_wmhd_values + fname_wmhd_sim_val, delimiter=',')
+                self.sim_rank_dict['WMHD'][param_str_key]['value'][target_wf] = wmhd_sim_val_arr[i]
+        else:
+            self.load_check_wmhd = False
+            wmhd_sim_val_arr = np.empty((len(target_wf_list), self.wbm_obj.data_len))
+            for i, target_wf in enumerate(target_wf_list):
                 time_start_for_wf = time.time()
-                fname_wmhd_sim_val = f'wmhd_sim_val_' \
-                                     f'{weight_type}_m_{m}_sout_{s_out_rate}_id_' \
-                                     f'{target_wf_list_id}_wf_{target_wf}.csv'
-                if os.path.isfile(self.wbm_obj.save_folder_wmhd_values + fname_wmhd_sim_val):
-                    self.load_check_wmhd = True
-                    wmhd_sim_val = np.loadtxt(self.wbm_obj.save_folder_wmhd_values + fname_wmhd_sim_val, delimiter=',')
-                    self.sim_rank_dict[sim_method][param_str_key]['value'][target_wf] = wmhd_sim_val
-                else:
-                    self.load_check_wmhd = False
-                    wmhd_sim_val = self.wbm_obj.wmhd_sim_calc_all(target_wf,
-                                                                  weight_type=weight_type,
-                                                                  m=m, s_out_rate=s_out_rate,
-                                                                  wmhd_tqdm=wmhd_tqdm)
-                    self.sim_rank_dict[sim_method][param_str_key]['value'][target_wf] = wmhd_sim_val
-                    np.savetxt(self.wbm_obj.save_folder_wmhd_values + fname_wmhd_sim_val, wmhd_sim_val,
-                               delimiter=',', fmt='%1.8f')
-                    time_end_for_wf = time.time()
-                    time_wmhd_for_wf = np.round(time_end_for_wf - time_start_for_wf, 3)
-                    self.runtime_dict['WMHD'] = {param_str_key: {target_wf: time_wmhd_for_wf}}
-            if not self.load_check_wmhd:
-                time_end = time.time()
-                time_wmhd = np.round(time_end - time_start, 3)
-                self.runtime_dict['WMHD'] = {param_str_key: {'total_time': time_wmhd}}
+                wmhd_sim_val = self.wbm_obj.wmhd_sim_calc_all(target_wf,
+                                                              weight_type=weight_type,
+                                                              m=m, s_out_rate=s_out_rate,
+                                                              wmhd_tqdm=wmhd_tqdm)
+                time_end_for_wf = time.time()
+                time_wmhd_for_wf = np.round(time_end_for_wf - time_start_for_wf, 3)
+                self.runtime_dict['WMHD'] = {param_str_key: {target_wf: time_wmhd_for_wf}}
+                self.sim_rank_dict['WMHD'][param_str_key]['value'][target_wf] = wmhd_sim_val
+                wmhd_sim_val_arr[i] = wmhd_sim_val.flatten()
+            time_end = time.time()
+            time_wmhd = np.round(time_end - time_start, 3)
+            self.runtime_dict['WMHD'] = {param_str_key: {'total_time': time_wmhd}}
+            np.savetxt(self.wbm_obj.save_folder_wmhd_values + fname_wmhd_sim_val, wmhd_sim_val_arr,
+                       delimiter=',', fmt='%1.8f')
 
     def update_dict_sim_score(self, target_wf_list, rank_interval=1):
         self.label_cnt_dict = self.wbm_obj.label_cnt_dict
@@ -1749,9 +1751,6 @@ class MODEL:
         with open(export_name, 'w') as fw:
             fw.write(json.dumps(self.sim_score_dict, indent=4, sort_keys=True))
 
-    def get_similarity_euclidean(self, target_wf_list):
-        self.update_dict_sim_val(target_wf_list, sim_method='EUC')
-
     def get_similarity_JSD(self,
                            target_wf_list,
                            n_cg=9,
@@ -1761,10 +1760,7 @@ class MODEL:
         self.get_dpgmm(infer_method=dpgmm_infer_method)
         self.get_skldm(linkage_method=linkage_method)
         self.get_cg(n_cg=n_cg, cov_type=cov_type)
-        self.update_dict_sim_val(target_wf_list, sim_method='JSD')
-
-    def get_similarity_WMHD(self, target_wf_list, weight_type='type_2', m=1, s_out_rate=0.1):
-        self.update_dict_sim_val(target_wf_list, sim_method='WMH', weight_type=weight_type, m=m, s_out_rate=s_out_rate)
+        self.update_dict_sim_val_JSD(target_wf_list)
 
     def export_runtime_dict_to_json(self):
         now_str = get_now_str()

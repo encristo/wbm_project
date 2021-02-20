@@ -17,8 +17,6 @@ wbm_2244 = WBM(private_wbmdata,
 
 if __name__ == '__main__':
 
-    wbm_2244.mountain_for_kingmove(0)
-    print('a')
     n_groups = 10
     wbm_2244.get_target_wf_group_list(n_groups)
     print(wbm_2244.target_wf_group_list)
