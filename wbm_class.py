@@ -1235,8 +1235,8 @@ class MODEL:
     def __init__(self, wbm_obj):
 
         self.wbm_obj = wbm_obj
-        self.sim_rank_dict = {'EUC': {}, 'JSD': {}, 'SKL': {}, 'WMH': {}}
-        self.sim_score_dict = {'EUC': {}, 'JSD': {}, 'SKL': {}, 'WMH': {}}
+        self.sim_rank_dict = {'EUC': {}, 'JSD': {}, 'SKL': {}, 'WMHD': {}}
+        self.sim_score_dict = {'EUC': {}, 'JSD': {}, 'SKL': {}, 'WMHD': {}}
         self.runtime_dict = {}
         self.fname_runtime_dict = self.wbm_obj.save_folder_runtime + f'runtime_dict.json'
 
