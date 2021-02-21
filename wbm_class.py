@@ -1672,7 +1672,7 @@ class MODEL:
                                     'runtime_total': self.runtime_dict['update_sim_mtx_dict_euclidean'] + time_EUC}
 
     def update_dict_sim_val_WMHD(self, target_wf_list, weight_type='type_2', m=1, s_out_rate=0.1, wmhd_tqdm=True):
-        param_str_key = f'{weight_type}, {m:.2f}, {s_out_rate:.3f}'
+        param_str_key = f'{weight_type}, {m:.3f}, {s_out_rate:.3f}'
         self.sim_rank_dict['WMHD'][param_str_key] = {}
         self.sim_rank_dict['WMHD'][param_str_key]['value'] = {}
         target_wf_list_id = str(target_wf_list)[1:-1].replace(', ', '_')
