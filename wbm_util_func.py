@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import scipy.stats as stats
 import wbm_class
 
+from scipy.spatial.distance import pdist
 from datetime import datetime
 from scipy.spatial.distance import squareform
 from scipy.cluster.hierarchy import linkage
@@ -165,8 +166,7 @@ def get_sym_KLD_cat_mtx(wv):
 
 
 def JSD(p, q):
-    m = 0.5 * (p + q)
-    return 0.5 * KLD_cat(p, m) + 0.5 * KLD_cat(q, m)
+    return 0.5 * KLD_cat(p, (0.5 * (p + q))) + 0.5 * KLD_cat(q, (0.5 * (p + q)))
 
 
 def get_JSD_cat_mtx(wv_arr):
@@ -181,6 +181,7 @@ def get_JSD_cat_mtx(wv_arr):
                 JSD_cat[i][j] = 0
             else:
                 JSD_cat[i][j] = JSD(p, q)
+                # print(f'{i:3}_{j:3}, {JSD_cat[i][j]:.4f}')
     return JSD_cat
 
 
@@ -234,11 +235,9 @@ def seriation(Z, N, cur_index):
         return seriation(Z, N, left) + seriation(Z, N, right)
 
 
-
-
 def plot_roc_curve(sim_score_dict, target_wf_list):
     n_target_wf = len(target_wf_list)
-    fig, axs = plt.subplots(1, n_target_wf, figsize=(4*n_target_wf, 4))
+    fig, axs = plt.subplots(1, n_target_wf, figsize=(4 * n_target_wf, 4))
     for sim_method in sim_score_dict.keys():
         for para in sim_score_dict[sim_method].keys():
             for i, target_wf in enumerate(target_wf_list):
@@ -275,8 +274,8 @@ def plot_dpmm_points_single_wafer(dpmm_obj, wbm_obj, wbm_idx, res_folder, n_exp,
         if cnt > 2:
             mu = dpmm_obj.paramClusterMu[clst]
             cov = dpmm_obj.paramClusterSigma[clst]
-            gridX = np.arange(min(wbm_obj.t_range), max(wbm_obj.t_range), max(wbm_obj.t_range)/100)
-            gridY = np.arange(min(wbm_obj.t_range), max(wbm_obj.t_range), max(wbm_obj.t_range)/100)
+            gridX = np.arange(min(wbm_obj.t_range), max(wbm_obj.t_range), max(wbm_obj.t_range) / 100)
+            gridY = np.arange(min(wbm_obj.t_range), max(wbm_obj.t_range), max(wbm_obj.t_range) / 100)
             meshX, meshY = np.meshgrid(gridX, gridY)
 
             Z = np.zeros(shape=(len(gridY), len(gridX)), dtype=float)
@@ -429,3 +428,29 @@ def sampleFromDistribution(dist):
         if draw < dist[itr]:
             return itr
     return len(dist) - 1
+
+
+def get_overlap_idx(data):
+    data_dist = squareform(pdist(data))
+    data_len = len(data_dist)
+    if (data_dist.flatten() == 0).sum() == data_len:
+        return np.ones(data_len) == 1
+    else:
+        overlap_replace_value = np.max(data_dist) + 100
+
+        for i in range(len(data_dist)):
+            data_dist[i, i] = 1
+        for i in range(len(data_dist)):
+            for j in range(len(data_dist)):
+                if data_dist[i, j] == 0:
+                    data_dist[i, j] = overlap_replace_value
+        same_arr = []
+        triu = np.triu(data_dist)
+        for i in range(len(data_dist)):
+            for j in range(len(data_dist)):
+                if triu[i, j] == overlap_replace_value:
+                    same_arr.append([i, j])
+        overlap_idx_arr = np.vstack(same_arr).T[1]
+        overlap_idx_arr_bool = np.ones(len(data_dist)) == 1
+        overlap_idx_arr_bool[overlap_idx_arr] = False
+        return overlap_idx_arr_bool

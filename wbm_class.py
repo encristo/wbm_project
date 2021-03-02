@@ -121,6 +121,7 @@ class WM811K:
         self.data_len = len(self.data)
         self.fail_rate_list = wm811k_dataset_obj.glob_fail_rate_list[self.seq_mask]
         self.label_list = wm811k_dataset_obj.glob_map_label_list[self.seq_mask]
+
         self.label_count_dict = {k: (self.label_list == k).sum() for k in range(len(self.map_type_list))}
 
     def plot_failrate_boxplot(self):
@@ -216,7 +217,7 @@ class DPGMM_MC:
                 gamma=0.001,
                 itr=10,
                 cov_1=1,
-                cov_2=10,
+                cov_2=20,
                 visualize=False,
                 printOut=False,
                 tqdm_on=False,
@@ -342,7 +343,7 @@ class DPGMM_MC:
         print("Cluster Sigma : ", sigma)
         print("Cluster list over iter : ", self.cntClusters_list_over_iter)
 
-    def plot(self, contour=True, title=True, save=False, save_format='pdf', figsize=(18, 3)):
+    def plot(self, contour=True, title=True, save=False, show=True, save_format='pdf', figsize=(18, 3)):
         fig, axs = plt.subplots(1, 6, figsize=figsize)
         axs[0].imshow(self.wbm_obj.data_with_nan[self.wbm_id].reshape(self.wbm_obj.map_shape), aspect='auto',
                       interpolation='none')
@@ -392,7 +393,10 @@ class DPGMM_MC:
         if save:
             fname = self.wbm_obj.save_folder_figures + f'dpgmm_mc_plot_{self.wbm_id}.{save_format}'
             fig.savefig(fname)
-        plt.show()
+        if show:
+            plt.show()
+        else:
+            plt.close(fig)
 
     def plot_iter(self, itr, contour=True, save=False, save_format='png', figsize=(9, 3)):
         para_Mu = np.vstack(self.paramClusterMu).reshape(-1, 2)
@@ -736,8 +740,8 @@ class DPGMM_VI:
 
 
 class WBM:
-    def __init__(self, dataset_012, label_list, label_name, map_shape, fail_rate_limit=0, norm_factor=False):
-
+    def __init__(self, dataset_012, label_list, label_name, map_shape, fail_rate_limit=(0, 1), norm_factor=False):
+        self.overlap_idx = get_overlap_idx(dataset_012)
         self.data_len = len(dataset_012)
         self.map_shape = map_shape
         self.map_len = map_shape[0] * map_shape[1]
@@ -746,15 +750,17 @@ class WBM:
         self.label_name_org = label_name
         self.label_cnt_dict_org = {i: (label_list == i).sum() for i in np.unique(label_list)}
         self.fail_rate_list = (dataset_012 == 2).sum(axis=1).flatten() / self.n_valid
-        self.fail_rate_mask_seq = np.arange(self.data_len)[self.fail_rate_list >= fail_rate_limit]
-        self.data = dataset_012[self.fail_rate_mask_seq]
-        self.org_seq = np.arange(self.data_len)[self.fail_rate_mask_seq]
+        self.fail_rate_mask_seq_min = self.fail_rate_list >= fail_rate_limit[0]
+        self.fail_rate_mask_seq_max = self.fail_rate_list <= fail_rate_limit[1]
+        self.mask = self.fail_rate_mask_seq_min * self.fail_rate_mask_seq_max * self.overlap_idx
+
+        self.data = dataset_012[self.mask]
         self.data_len = len(self.data)
-        self.label_list = label_list[self.fail_rate_mask_seq]
+        self.label_list = label_list[self.mask]
         self.label_name = label_name[np.unique(self.label_list)]
         self.unique_label = list(set(self.label_list))
         self.label_cnt_dict = {i: (self.label_list == i).sum() for i in np.unique(self.label_list)}
-        self.fail_rate_list2 = self.fail_rate_list[self.fail_rate_mask_seq]
+        self.fail_rate_list2 = self.fail_rate_list[self.mask]
 
         self.sample_zero_one = np.array(dataset_012[0].reshape(self.map_shape))
         self.sample_zero_one[self.sample_zero_one == 2] = 1
@@ -927,7 +933,7 @@ class WBM:
 
         plt.show()
 
-    def plot_multiple_sample_imshow(self, id_list):
+    def plot_multiple_sample_imshow(self, id_list, title=True):
         n_args = len(id_list)
         fig, axs = plt.subplots(1, n_args, figsize=(n_args * 3, 3))
         for i, wbm_id in enumerate(id_list):
@@ -935,6 +941,8 @@ class WBM:
                           cmap=ListedColormap(["lightgray", "red"]))
             axs[i].get_xaxis().set_visible(False)
             axs[i].get_yaxis().set_visible(False)
+            if title:
+                axs[i].set_title(wbm_id)
         plt.show()
 
     def plot_sample_xy(self, wbm_id, save=True, save_format='pdf'):
@@ -1130,14 +1138,20 @@ class WBM:
         if wmhd_tqdm:
             pbar = tqdm(range(self.data_len))
             for compared_id in pbar:
-                wmhd_sim_res.append(
-                    self.wmhd_sim_calc(target_id, compared_id, weight_type=weight_type, m=m, s_out_rate=s_out_rate))
+                if target_id == compared_id:
+                    wmhd_sim_res.append(-1)
+                else:
+                    wmhd_sim_res.append(
+                        self.wmhd_sim_calc(target_id, compared_id, weight_type=weight_type, m=m, s_out_rate=s_out_rate))
                 pbar.set_description(
                     f'm:{m:.2f} s_out_rate:{s_out_rate:.3f} target wf : {target_id:4}, compared_wf : {compared_id:4}')
         else:
             for compared_id in range(self.data_len):
-                wmhd_sim_res.append(
-                    self.wmhd_sim_calc(target_id, compared_id, weight_type=weight_type, m=m, s_out_rate=s_out_rate))
+                if target_id == compared_id:
+                    wmhd_sim_res.append(-1)
+                else:
+                    wmhd_sim_res.append(
+                        self.wmhd_sim_calc(target_id, compared_id, weight_type=weight_type, m=m, s_out_rate=s_out_rate))
 
         return np.array(wmhd_sim_res).flatten()
 
@@ -1210,7 +1224,7 @@ class CG:
 
                 likelihood_mtx /= likelihood_mtx.sum(axis=1).reshape(-1, 1)
                 self.weight_vector_arr[wbm_id] = likelihood_mtx.mean(axis=0)
-                # self.weight_vector_arr[wbm_id] += (np.random.rand(n_cg) * self.epsilon)
+                self.weight_vector_arr[wbm_id] += (np.random.rand(n_cg) * self.epsilon)
                 self.weight_vector_arr[wbm_id] /= self.weight_vector_arr[wbm_id].sum()
         else:
             for wbm_id in range(wbm_obj.data_len):
@@ -1360,7 +1374,7 @@ class MODEL:
         self.update_sim_mtx_dict_JSD()
         self.dict_rank['value']['JSD'].update({n_cg: {}})
 
-    def get_cg_list(self, max_n_cg=40, cov_type='real', norm_likelihood=False, plot=True):
+    def get_cg_list(self, max_n_cg=60, cov_type='real', norm_likelihood=True, plot=True):
         self.cg_list = []
         time_cg_list_start = time.time()
         for i in trange(1, max_n_cg + 1):
@@ -1372,19 +1386,21 @@ class MODEL:
                                    cov_type=cov_type,
                                    norm_likelihood=norm_likelihood,
                                    n_cg=i))
-        self.cg_loss_list = [cg.loss_mean for cg in self.cg_list]
         time_cg_list_end = time.time()
+        self.cg_loss_arr = np.vstack([cg.loss.flatten() for cg in self.cg_list])
+        self.cg_loss_arr_mean = self.cg_loss_arr.mean(axis=1).flatten()
         time_cg_list = np.round(time_cg_list_end - time_cg_list_start, 3)
         self.runtime_dict['cg_list'] = {self.dpgmm_infer_method: {max_n_cg: time_cg_list},
                                         'end_time': get_now_str()}
+        self.min_mse_cg = np.argsort(self.cg_loss_arr_mean)[0]+1
         if plot:
             xticks = np.arange(1, max_n_cg + 1)
             fig, axs = plt.subplots(figsize=(15, 4))
-            axs.plot(xticks, self.cg_loss_list, 'bo-')
+            axs.plot(xticks, self.cg_loss_arr_mean, 'bo-')
             axs.set_xticks(xticks)
             axs.grid()
             plt.show()
-        return self.cg_loss_list
+        return self.cg_loss_arr_mean
 
     def plot_skldm(self, vmax=100, save=True, save_format='pdf'):
         """
@@ -1418,20 +1434,28 @@ class MODEL:
             plt.savefig(fname)
         plt.show()
 
-    def plot_sim_rank_result(self, TWL_id, method, para, layout='series', save=False):
+    def plot_sim_rank_result(self, TWL_id, method, para, layout='series', title=True, save=False):
         TF_color_dict = {True: 'b', False: 'r'}
-        TWL_id_str = str(self.wbm_obj.target_wf_group_list[TWL_id])
+        if type(TWL_id) == int:
+            TWL_id_str = str(self.wbm_obj.target_wf_group_list[TWL_id])
+            prec_avg = self.dict_score['pre_avg'][method][para][TWL_id_str].round(3)
+            folder_name = f'{TWL_id_str}_TWLid_{TWL_id}_{method}_{para}_{prec_avg}'
+            save_folder = make_sub_folder(self.wbm_obj.save_folder_figures, folder_name)
+            TWL = self.wbm_obj.target_wf_group_list[TWL_id]
 
-        prec_avg = self.dict_score['pre_avg'][method][para][TWL_id_str].round(3)
-        folder_name = f'{TWL_id_str}_TWLid_{TWL_id}_{method}_{para}_{prec_avg}'
-        TWL = self.wbm_obj.target_wf_group_list[TWL_id]
-        save_folder = make_sub_folder(self.wbm_obj.save_folder_figures, folder_name)
+        else:
+            TWL_id_str = str(TWL_id)
+            prec_avg = self.dict_score['pre_avg'][method][para][TWL_id_str].round(3)
+            folder_name = f'{TWL_id_str}_TWLid_none_{method}_{para}_{prec_avg}'
+            save_folder = make_sub_folder(self.wbm_obj.save_folder_figures, folder_name)
+            TWL = TWL_id
         # layout : series
         if layout == 'series':
             for target_seq, target_id in enumerate(TWL):
                 cor = self.dict_score['cor'][method][para][str(TWL)][target_id]
                 n_img = min(len(cor), 15)
                 ranked_id_arr = self.dict_rank['rank'][method][para][str(TWL)][target_id][:n_img]
+                map_type_arr = np.array([self.wbm_obj.label_name_org[i] for i in self.wbm_obj.label_list[ranked_id_arr]])
                 fig, axs = plt.subplots(1, 15, figsize=(15 * 3, 3))
 
                 for i, ax in enumerate(axs.flat[:n_img]):

@@ -1,5 +1,6 @@
 from wbm_class import *
 from wbm_util_func import *
+np.set_printoptions(formatter={'float_kind': lambda x: "{0:0.3f}".format(x)})
 
 # DATASET LOAD
 # PRIVATE DATASET LOAD
@@ -12,22 +13,27 @@ private_label_map_type_list = np.array(['C+R', 'Left_Top', 'Center', 'L+R', 'Edg
 wbm_2244 = WBM(private_wbmdata,
                private_label,
                private_label_map_type_list,
-               map_shape=(22, 44), fail_rate_limit=0.01, norm_factor=10)
+               map_shape=(22, 44), fail_rate_limit=(0, 1), norm_factor=10)
+
+# infile = open('./dataset/wm811k_2626', 'rb')
+# wm811k_2626 = pickle.load(infile, encoding='latin1')
+# wm811k_2626_data = np.loadtxt('./dataset/wm811k_2626_data_none_100ea.csv', delimiter=',', dtype='uint8')
+# wm811k_2626_label = np.loadtxt('./dataset/wm811k_2626_label_none_100ea.csv', delimiter=',', dtype='uint8')
+# wbm_2626 = WBM(wm811k_2626_data,
+#                wm811k_2626_label,
+#                wm811k_2626.map_type_list,
+#                map_shape=(26, 26), fail_rate_limit=(0, 0.5), norm_factor=10)
+
 
 if __name__ == '__main__':
 
-    infile = open('./dataset/wm811k_dataset', 'rb')
-    wm811k_dataset = pickle.load(infile, encoding='latin1')
-    wm811k_2626 = WM811K(wm811k_dataset,
-                         map_shape=(26, 26), n_valid=533, label_count_lim=10, map_type_exclude=[], verbose=False)
-    wbm_2626 = WBM(wm811k_2626.data, wm811k_2626.label_list, wm811k_2626.map_type_list, (35, 40))
-
     model_2244 = MODEL(wbm_2244)
-    model_2244.get_dpgmm()
+    model_2244.get_dpgmm(infer_method='mc')
     model_2244.get_skldm()
-    model_2244.get_cg(n_cg=10, norm_likelihood=True)
-    model_2244.update_dict_sim_val_JSD(wbm_2244.target_wf_list)
-    model_2244.update_dict_sim_score()
+    n_cg = 37
+    model_2244.get_cg(n_cg=n_cg)
+    model_2244.update_sim_mtx_dict_euclidean()
+    model_2244.set_para_wmhd(weight_type='type_2', m=0.1, s=0.1)
 
     print('================')
     print('end')
