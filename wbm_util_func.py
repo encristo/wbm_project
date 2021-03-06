@@ -171,18 +171,18 @@ def JSD(p, q):
 
 def get_JSD_cat_mtx(wv_arr):
     data_len = len(wv_arr)
-    JSD_cat = np.zeros((data_len, data_len))
+    JSD_cat_mtx = np.zeros((data_len, data_len))
 
     for i in range(data_len):
         p = wv_arr[i]
         for j in range(data_len):
             q = wv_arr[j]
             if i == j:
-                JSD_cat[i][j] = 0
+                JSD_cat_mtx[i][j] = 0
             else:
-                JSD_cat[i][j] = JSD(p, q)
-                # print(f'{i:3}_{j:3}, {JSD_cat[i][j]:.4f}')
-    return JSD_cat
+                JSD_cat_mtx[i][j] = JSD(p, q)
+                # print(f'{i:3}_{j:3}, {JSD_cat_mtx[i][j]:.4f}')
+    return JSD_cat_mtx
 
 
 def compute_serial_matrix(dist_mat, linkage_method, optimal=False):

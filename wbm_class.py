@@ -9,7 +9,7 @@ from sklearn.mixture import BayesianGaussianMixture
 from scipy.cluster.hierarchy import cut_tree, dendrogram
 from scipy.stats import multivariate_normal
 from sklearn.preprocessing import MinMaxScaler
-from scipy.spatial.distance import euclidean, squareform, cdist, pdist
+from scipy.spatial.distance import euclidean, squareform, cdist, pdist, cityblock
 from sklearn.metrics import confusion_matrix, auc
 from sklearn.covariance import empirical_covariance
 from numpy.random import multivariate_normal as mvn
@@ -737,6 +737,7 @@ class DPGMM_VI:
                                                                            meshY[itr1][itr2]],
                                                                           mean=mu, cov=cov)
                     axs.contour(meshX, meshY, Z, 1, colors='k', linewidths=1)
+        plt.show()
 
 
 class WBM:
@@ -760,7 +761,7 @@ class WBM:
         self.label_name = label_name[np.unique(self.label_list)]
         self.unique_label = list(set(self.label_list))
         self.label_cnt_dict = {i: (self.label_list == i).sum() for i in np.unique(self.label_list)}
-        self.fail_rate_list2 = self.fail_rate_list[self.mask]
+        self.fail_rate_list_limited = self.fail_rate_list[self.mask]
 
         self.sample_zero_one = np.array(dataset_012[0].reshape(self.map_shape))
         self.sample_zero_one[self.sample_zero_one == 2] = 1
@@ -885,11 +886,12 @@ class WBM:
         self.save_folder_scores = make_sub_folder(self.save_folder_results, 'scores')
         self.save_folder_runtime = make_sub_folder(self.save_folder_results, 'runtime')
 
-    def get_target_wf_group_list(self, load=False, n_groups=100, save=False, fname=''):
-        if load:
-            fname = self.save_folder_results + f'{fname}.csv'
-            self.target_wf_group_list = np.loadtxt(fname, dtype='uint8', delimiter=',').tolist()
+    def get_target_wf_group_list(self, n_groups=100, save=True):
+        fname = self.save_folder_results + f'target_wf_group_list_{n_groups}ea.csv'
+        if os.path.isfile(fname):
+            self.target_wf_group_list = np.loadtxt(fname, dtype='int', delimiter=',').tolist()
             self.n_groups = len(self.target_wf_group_list)
+            print('target wf group list file exist, data have been loaded.')
         else:
             self.n_groups = n_groups
             self.target_wf_group_list = np.zeros((len(self.unique_label), n_groups), dtype='int')
@@ -899,10 +901,11 @@ class WBM:
                                                                 replace=True)
 
             self.target_wf_group_list = self.target_wf_group_list.T.tolist()
-            list_id = str(self.target_wf_group_list[0])[1:-1].replace(', ', '_')
             if save:
-                fname = self.save_folder_results + f'target_wf_group_list_{list_id}.csv'
+                print('target wf group list file does not exist, data have been saved.')
                 np.savetxt(fname, np.array(self.target_wf_group_list), delimiter=',', fmt='%1.8f')
+            else:
+                print('target wf group list file does not exist. data is not saved')
 
     def plot_sample_imshow(self, wbm_id):
         fig, axs = plt.subplots(figsize=(3, 3))
@@ -1032,6 +1035,25 @@ class WBM:
             fig.savefig(fname)
         plt.show()
 
+    def plot_class_all_samples(self, n_cols=10, save=False, save_format='pdf'):
+        for class_seq, (class_id, n_samples) in enumerate(self.label_cnt_dict.items()):
+            class_name = self.label_name[class_seq]
+            sample_idx = np.arange(self.data_len)[self.label_list == class_id]
+            n_rows = int(np.ceil(n_samples / n_cols))
+            fig, axs = plt.subplots(n_rows, n_cols, figsize=(3 * n_cols, 3 * n_rows))
+            for i, ax in enumerate(axs.flat[:n_samples]):
+                ax.get_xaxis().set_visible(False)
+                ax.get_yaxis().set_visible(False)
+                ax.imshow(self.data_with_nan[sample_idx[i]].reshape(self.map_shape),
+                          aspect='auto',
+                          interpolation='none',
+                          cmap=cmap_gray_red)
+                ax.set_title(class_name, fontsize='xx-large')
+            if save:
+                fname = self.save_folder_figures + f'class_all_samples_{class_id}_{class_name}.{save_format}'
+                fig.savefig(fname)
+            plt.show()
+
     def get_polar_points(self, wbm_id):
         return self.tr[self.data[wbm_id] == 2]
 
@@ -1065,15 +1087,29 @@ class WBM:
         mountain_pad_mtx = mountain_pad_mtx.reshape(self.map_shape_zero_padded)
         return mountain_pad_mtx
 
-    def wmhd_sim_calc(self, target_id, compared_id, weight_type='type_0', m=1, s_out_rate=False):
+    def get_mountain_kingmove_mtx(self, m):
+        self.wmhd_para_m = m
+        self.mountain_kingmove_mtx = np.empty((self.data_len,
+                                               self.map_shape_zero_padded[0],
+                                               self.map_shape_zero_padded[1]))
+        time_start = time.time()
+        for wbm_id in range(self.data_len):
+            self.mountain_kingmove_mtx[wbm_id] = self.mountain_for_kingmove(wbm_id, m=m)
+        return time.time() - time_start
+
+    def wmhd_sim_calc(self, target_id, compared_id, dist_type, s):
+        if dist_type == 'cityblock':
+            dist_func = cityblock
+        else:
+            dist_func = euclidean
+
         xy_target = self.get_xy_points(target_id)
-        xy_compare = self.get_xy_points(compared_id)
         wbm_bool_target = np.array(self.data_without_nan[target_id], dtype='bool')
         wbm_bool_compare = np.array(self.data_without_nan[compared_id], dtype='bool')
         n_target = len(xy_target)
         out_idx_arr = np.array(np.ones(len(xy_target)), dtype='bool')
-        if s_out_rate:
-            s_out = self.euc_dist_max * s_out_rate
+        if s:
+            s_out = self.euc_dist_max * s
             out_idx_arr = self.euc_dist_mtx[wbm_bool_target].T[wbm_bool_compare].T.min(axis=1) < s_out
         else:
             s_out = 0
@@ -1082,76 +1118,50 @@ class WBM:
         n_target = n_target - n_out
 
         h = 0  # wmhd initialization
+        Ma_mtx = self.mountain_kingmove_mtx[target_id]
+        Mb_mtx = self.mountain_kingmove_mtx[compared_id]
+        target_row_col = np.argwhere(self.data_zero_padded[target_id].reshape(self.map_shape_zero_padded) == 2)
+        compared_row_col = np.argwhere(self.data_zero_padded[compared_id].reshape(self.map_shape_zero_padded) == 2)
 
-        # weight design #
-        # weight design : type 0
-        if weight_type == 'type_0':
-            w = 1
-            for a in xy_target:
-                euc_dist_min_arr = []
-                for b in xy_compare:
-                    euc_dist_min_arr.append(w * euclidean(a, b))
-                h += min(np.array(euc_dist_min_arr))
-            h /= (n_target + self.epsilon)
-
-        # weight design : type 1
-        elif weight_type == 'type_1':
-            Ma, _ = self.mountain(target_id, m=m)
-            Mb, _ = self.mountain(compared_id, m=m)
-            for i, a in enumerate(xy_target):
-                euc_dist_min_arr = []
-                for j, b in enumerate(xy_compare):
-                    w = np.abs(Ma[i] - Mb[j]) / max(Ma[i], Mb[j])
-                    euc_dist_min_arr.append(w * euclidean(a, b))
-                h += min(np.array(euc_dist_min_arr))
-            h /= (n_target + self.epsilon)
-
-        # weight design : type 2
-        else:
-            Ma_mtx = self.mountain_for_kingmove(target_id, m=m)
-            Mb_mtx = self.mountain_for_kingmove(compared_id, m=m)
-            target_row_col = np.argwhere(self.data_zero_padded[target_id].reshape(self.map_shape_zero_padded) == 2)
-            compared_row_col = np.argwhere(self.data_zero_padded[compared_id].reshape(self.map_shape_zero_padded) == 2)
-
-            neighbor_idx = np.array([[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 0], [0, 1], [1, -1], [1, 0], [1, 1]])
-            for a_row_col in target_row_col:
-                w = 0
-                euc_dist_min_arr = []
-                a_xy = self.xy_pad[
-                    np.arange(self.map_len_zero_padded).reshape(self.map_shape_zero_padded)[tuple(a_row_col)]]
-                for b_row_col in compared_row_col:
-                    b_xy = self.xy_pad[
-                        np.arange(self.map_len_zero_padded).reshape(self.map_shape_zero_padded)[tuple(b_row_col)]]
-                    for neighbor in neighbor_idx:
-                        Ma_neighbor = Ma_mtx[a_row_col[0] + neighbor[0]][a_row_col[1] + neighbor[1]]
-                        Mb_neighbor = Mb_mtx[b_row_col[0] + neighbor[0]][b_row_col[1] + neighbor[1]]
-                        w += np.abs(Ma_neighbor - Mb_neighbor) / max(Ma_neighbor, Mb_neighbor)
-                    euc_dist_min_arr.append(w * euclidean(a_xy, b_xy))
-                h += min(np.array(euc_dist_min_arr))
-            h /= (n_target + self.epsilon)
+        neighbor_idx = np.array([[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 0], [0, 1], [1, -1], [1, 0], [1, 1]])
+        for a_row_col in target_row_col:
+            w = 0
+            dist_min_arr = []
+            a_xy = self.xy_pad[
+                np.arange(self.map_len_zero_padded).reshape(self.map_shape_zero_padded)[tuple(a_row_col)]]
+            for b_row_col in compared_row_col:
+                b_xy = self.xy_pad[
+                    np.arange(self.map_len_zero_padded).reshape(self.map_shape_zero_padded)[tuple(b_row_col)]]
+                for neighbor in neighbor_idx:
+                    Ma_neighbor = Ma_mtx[a_row_col[0] + neighbor[0]][a_row_col[1] + neighbor[1]]
+                    Mb_neighbor = Mb_mtx[b_row_col[0] + neighbor[0]][b_row_col[1] + neighbor[1]]
+                    w += np.abs(Ma_neighbor - Mb_neighbor) / max(Ma_neighbor, Mb_neighbor)
+                dist_min_arr.append(w * dist_func(a_xy, b_xy))
+            h += min(np.array(dist_min_arr))
+        h /= (n_target + self.epsilon)
 
         sim_val = h + (n_out * s_out)
         return sim_val
 
-    def wmhd_sim_calc_all(self, target_id, weight_type='type_2', m=1, s_out_rate=False, wmhd_tqdm=True):
+    def wmhd_sim_calc_all(self, target_id, dist_type, s, wmhd_tqdm=True):
         wmhd_sim_res = []
         if wmhd_tqdm:
             pbar = tqdm(range(self.data_len))
             for compared_id in pbar:
                 if target_id == compared_id:
-                    wmhd_sim_res.append(-1)
+                    wmhd_sim_res.append(int(-1))
                 else:
                     wmhd_sim_res.append(
-                        self.wmhd_sim_calc(target_id, compared_id, weight_type=weight_type, m=m, s_out_rate=s_out_rate))
+                        self.wmhd_sim_calc(target_id, compared_id, dist_type=dist_type, s=s))
                 pbar.set_description(
-                    f'm:{m:.2f} s_out_rate:{s_out_rate:.3f} target wf : {target_id:4}, compared_wf : {compared_id:4}')
+                    f'm:{self.wmhd_para_m:.2f} s:{s:.3f} target wf : {target_id:4}, compared_wf : {compared_id:4}')
         else:
             for compared_id in range(self.data_len):
                 if target_id == compared_id:
-                    wmhd_sim_res.append(-1)
+                    wmhd_sim_res.append(int(-1))
                 else:
                     wmhd_sim_res.append(
-                        self.wmhd_sim_calc(target_id, compared_id, weight_type=weight_type, m=m, s_out_rate=s_out_rate))
+                        self.wmhd_sim_calc(target_id, compared_id, dist_type=dist_type, s=s))
 
         return np.array(wmhd_sim_res).flatten()
 
@@ -1277,6 +1287,8 @@ class MODEL:
         for score_key in self.dict_score.keys():
             self.dict_score[score_key].update({'EUC': {}, 'JSD': {}, 'WMHD': {}})
         self.runtime_dict = {}
+        self.runtime_dict.update({'EUC': {'none': {}}})
+        self.runtime_dict.update({'WMHD': {}})
         self.fname_runtime_dict = self.wbm_obj.save_folder_runtime + f'runtime_dict.json'
 
         if not os.path.isfile(self.fname_runtime_dict):
@@ -1308,7 +1320,7 @@ class MODEL:
                     self.dpgmm_list.append(dpgmm)
             time_dpgmm_end = time.time()
             time_dpgmm = np.round(time_dpgmm_end - time_dpgmm_start, 3)
-            self.runtime_dict['dpgmm'] = {self.dpgmm_infer_method: time_dpgmm, 'end_time': get_now_str()}
+            self.runtime_dict['dpgmm'] = {self.dpgmm_infer_method: time_dpgmm}
             if save:
                 save_list(self.dpgmm_list, self.wbm_obj.save_folder_results + self.fname_dpgmm_list)
 
@@ -1345,7 +1357,7 @@ class MODEL:
             self.skldm = get_SKLDM(self.mean_list, self.cov_list)
             time_skldm_end = time.time()
             time_skldm = np.round(time_skldm_end - time_skldm_start, 3)
-            self.runtime_dict['skldm'] = {self.dpgmm_infer_method: time_skldm, 'end_time': get_now_str()}
+            self.runtime_dict['skldm'] = {self.dpgmm_infer_method: time_skldm}
             if save:
                 save_list(self.skldm, self.wbm_obj.save_folder_results + self.fname_skldm)
 
@@ -1370,8 +1382,8 @@ class MODEL:
                      n_cg=self.n_cg)
         time_cg_end = time.time()
         time_cg = np.round(time_cg_end - time_cg_start, 3)
-        self.runtime_dict['cg'] = {self.dpgmm_infer_method: {n_cg: time_cg}, 'end_time': get_now_str()}
-        self.update_sim_mtx_dict_JSD()
+        self.runtime_dict['cg'] = {self.dpgmm_infer_method: {n_cg: time_cg}}
+        self.runtime_dict['JSD'] = {n_cg: {}}
         self.dict_rank['value']['JSD'].update({n_cg: {}})
 
     def get_cg_list(self, max_n_cg=60, cov_type='real', norm_likelihood=True, plot=True):
@@ -1390,8 +1402,7 @@ class MODEL:
         self.cg_loss_arr = np.vstack([cg.loss.flatten() for cg in self.cg_list])
         self.cg_loss_arr_mean = self.cg_loss_arr.mean(axis=1).flatten()
         time_cg_list = np.round(time_cg_list_end - time_cg_list_start, 3)
-        self.runtime_dict['cg_list'] = {self.dpgmm_infer_method: {max_n_cg: time_cg_list},
-                                        'end_time': get_now_str()}
+        self.runtime_dict['cg_list'] = {self.dpgmm_infer_method: {max_n_cg: time_cg_list}}
         self.min_mse_cg = np.argsort(self.cg_loss_arr_mean)[0]+1
         if plot:
             xticks = np.arange(1, max_n_cg + 1)
@@ -1400,7 +1411,7 @@ class MODEL:
             axs.set_xticks(xticks)
             axs.grid()
             plt.show()
-        return self.cg_loss_arr_mean
+        return self.cg_loss_arr_mean, self.min_mse_cg
 
     def plot_skldm(self, vmax=100, save=True, save_format='pdf'):
         """
@@ -1434,7 +1445,7 @@ class MODEL:
             plt.savefig(fname)
         plt.show()
 
-    def plot_sim_rank_result(self, TWL_id, method, para, layout='series', title=True, save=False):
+    def plot_sim_rank_result(self, TWL_id, method, para, layout='series', save=False):
         TF_color_dict = {True: 'b', False: 'r'}
         if type(TWL_id) == int:
             TWL_id_str = str(self.wbm_obj.target_wf_group_list[TWL_id])
@@ -1455,7 +1466,8 @@ class MODEL:
                 cor = self.dict_score['cor'][method][para][str(TWL)][target_id]
                 n_img = min(len(cor), 15)
                 ranked_id_arr = self.dict_rank['rank'][method][para][str(TWL)][target_id][:n_img]
-                map_type_arr = np.array([self.wbm_obj.label_name_org[i] for i in self.wbm_obj.label_list[ranked_id_arr]])
+                map_type_arr = np.array(
+                    [self.wbm_obj.label_name_org[i] for i in self.wbm_obj.label_list[ranked_id_arr]])
                 fig, axs = plt.subplots(1, 15, figsize=(15 * 3, 3))
 
                 for i, ax in enumerate(axs.flat[:n_img]):
@@ -1465,8 +1477,8 @@ class MODEL:
                               aspect='auto',
                               interpolation='none',
                               cmap=cmap_gray_red)
-                    ax.set_title(cor[i], fontsize='xx-large', c=TF_color_dict[cor[i]])
-                axs[0].set_title('Target', fontsize='xx-large', c='k')
+                    ax.set_title(f'{cor[i]} \n {map_type_arr[i]}', fontsize='xx-large', c=TF_color_dict[cor[i]])
+                axs[0].set_title(f'Target \n {map_type_arr[0]}', fontsize='xx-large', c='k')
                 if n_img < 15:
                     for ax in axs.flat[n_img:]:
                         ax.axis('off')
@@ -1480,6 +1492,8 @@ class MODEL:
                 cor = self.dict_score['cor'][method][para][str(TWL)][target_id]
                 n_img = min(len(cor), 15)
                 ranked_id_arr = self.dict_rank['rank'][method][para][str(TWL)][target_id][:n_img]
+                map_type_arr = np.array(
+                    [self.wbm_obj.label_name_org[i] for i in self.wbm_obj.label_list[ranked_id_arr]])
                 fig, axs = plt.subplots(3, 5, figsize=(5 * 3, 3 * 3))
 
                 for i, ax in enumerate(axs.flat[:n_img]):
@@ -1489,8 +1503,8 @@ class MODEL:
                               aspect='auto',
                               interpolation='none',
                               cmap=cmap_gray_red)
-                    ax.set_title(cor[i], fontsize='xx-large', c=TF_color_dict[cor[i]])
-                axs[0].set_title('Target', fontsize='xx-large', c='k')
+                    ax.set_title(f'{cor[i]} \n {map_type_arr[i]}', fontsize='xx-large', c=TF_color_dict[cor[i]])
+                axs[0].set_title(f'Target \n {map_type_arr[0]}', fontsize='xx-large', c='k')
                 if n_img < 15:
                     for ax in axs.flat[n_img:]:
                         ax.axis('off')
@@ -1547,7 +1561,7 @@ class MODEL:
                     axs[i].contour(meshX, meshY, Z, 1, colors='k', linewidths=0.5)
         if save:
             fname = self.wbm_obj.save_folder_figures + f'plot_cg_mean_cov_{self.n_cg}.{save_format}'
-            fig.savefig(fname)
+            fig.savefig(fname, bbox_inches='tight')
         plt.show()
 
     def plot_cg_contour_avg_mean_cov(self, save=True, save_format='pdf'):
@@ -1786,36 +1800,53 @@ class MODEL:
 
     def update_dict_sim_val_JSD(self, target_wf_list):
         key_n_cg = self.n_cg
+        n_target_wf = len(target_wf_list)
         key_wf_list = str(target_wf_list)
 
         self.dict_rank['value']['JSD'][key_n_cg].update({key_wf_list: {}})
+        self.runtime_dict['JSD'][key_n_cg].update({key_wf_list: {}})
 
+        time_JSD_vector = 0
         for target_wf in target_wf_list:
-            self.dict_rank['value']['JSD'][key_n_cg][key_wf_list].update(
-                {target_wf: self.sim_mtx_dict['JSD'][target_wf]})
+            JSD_vector, time_elapsed = self.calc_JSD_vector(target_wf)
+            time_JSD_vector += time_elapsed
+            self.dict_rank['value']['JSD'][key_n_cg][key_wf_list].update({target_wf: JSD_vector})
+        time_JSD_vector_avg = time_JSD_vector / n_target_wf
+        self.runtime_dict['JSD'][key_n_cg][key_wf_list].update({'JSD_vec_total': time_JSD_vector})
+        self.runtime_dict['JSD'][key_n_cg][key_wf_list].update({'JSD_vec_avg': time_JSD_vector_avg})
+
         if not (self.load_check_dpgmm and self.load_check_skldm):
             time_JSD = np.round(self.runtime_dict['dpgmm'][self.dpgmm_infer_method]
                                 + self.runtime_dict['skldm'][self.dpgmm_infer_method]
                                 + self.runtime_dict['cg'][self.dpgmm_infer_method][self.n_cg]
-                                + self.runtime_dict['update_sim_mtx_dict_JSD'],
+                                + self.runtime_dict['JSD'][key_n_cg][key_wf_list]['JSD_vec_total'],
                                 3)
-            self.runtime_dict['JSD'] = {'para': {'n_cg': self.n_cg,
-                                                 'cov_type': self.cov_type,
-                                                 'linkage_method': self.linkage_method},
-                                        'runtime_total': time_JSD}
+            self.runtime_dict['JSD'][key_n_cg][key_wf_list].update({'JSD_total': time_JSD})
 
     def update_dict_sim_val_EUC(self, target_wf_list):
+        n_target_wf = len(target_wf_list)
         key_wf_list = str(target_wf_list)
         self.dict_rank['value']['EUC']['none'].update({key_wf_list: {}})
-        for target_wf in target_wf_list:
-            self.dict_rank['value']['EUC']['none'][key_wf_list].update({target_wf: self.sim_mtx_dict['EUC'][target_wf]})
+        self.runtime_dict['EUC']['none'].update({key_wf_list: {}})
 
-    def set_para_wmhd(self, weight_type='type_2', m=0.1, s=0.1):
-        self.weight_type = weight_type
+        time_EUC_vector = 0
+        for target_wf in target_wf_list:
+            EUC_vector, time_elapsed = self.calc_EUC_vector(target_wf)
+            time_EUC_vector += time_elapsed
+            self.dict_rank['value']['EUC']['none'][key_wf_list].update({target_wf: EUC_vector})
+        time_EUC_vector_avg = time_EUC_vector / n_target_wf
+        self.runtime_dict['EUC']['none'][key_wf_list].update({'EUC_vec_total': time_EUC_vector})
+        self.runtime_dict['EUC']['none'][key_wf_list].update({'EUC_vec_avg': time_EUC_vector_avg})
+
+    def set_para_wmhd(self, dist_type='cityblock', m=0.1, s=0.1):
+        self.dist_type = dist_type
         self.wmhd_m = m
         self.wmhd_s = s
-        self.wmhd_para = f'm_{m:.3f}_sout_{s:.3f}'
+        self.wmhd_para = f'{dist_type}_m_{m:.3f}_s_{s:.3f}'
         self.dict_rank['value']['WMHD'].update({self.wmhd_para: {}})
+        self.runtime_dict['WMHD'].update({self.wmhd_para: {}})
+        time_mountain_func = self.wbm_obj.get_mountain_kingmove_mtx(m=m)
+        self.runtime_dict['WMHD'][self.wmhd_para].update({'mountain_func': time_mountain_func})
 
     def update_dict_sim_val_WMHD(self, target_wf_list, wmhd_tqdm=True):
         target_wf_list_id = str(target_wf_list)[1:-1].replace(', ', '_')
@@ -1836,8 +1867,7 @@ class MODEL:
             for i, target_wf in enumerate(target_wf_list):
                 time_start_for_wf = time.time()
                 wmhd_sim_val = self.wbm_obj.wmhd_sim_calc_all(target_wf,
-                                                              weight_type=self.weight_type,
-                                                              m=self.wmhd_m, s_out_rate=self.wmhd_s,
+                                                              dist_type=self.dist_type, s=self.wmhd_s,
                                                               wmhd_tqdm=wmhd_tqdm)
                 time_end_for_wf = time.time()
                 time_wmhd_for_wf = np.round(time_end_for_wf - time_start_for_wf, 3)
@@ -1901,17 +1931,6 @@ class MODEL:
         with open(export_name, 'w') as fw:
             fw.write(json.dumps(self.dict_score, indent=4, sort_keys=True))
 
-    def get_similarity_JSD(self,
-                           target_wf_list,
-                           n_cg=9,
-                           dpgmm_infer_method='vi',
-                           cov_type='real',
-                           linkage_method='complete'):
-        self.get_dpgmm(infer_method=dpgmm_infer_method)
-        self.get_skldm(linkage_method=linkage_method)
-        self.get_cg(n_cg=n_cg, cov_type=cov_type)
-        self.update_dict_sim_val_JSD(target_wf_list)
-
     def export_runtime_dict_to_json(self):
         now_str = get_now_str()
         with open(self.fname_runtime_dict, 'r') as jsonFile:
@@ -1920,42 +1939,95 @@ class MODEL:
         with open(self.fname_runtime_dict, 'w') as fw:
             fw.write(json.dumps(runtime_dict_temp, indent=4, sort_keys=True))
 
-    def get_score_summary(self, method_list, para_list):
-        TWGL = self.wbm_obj.target_wf_group_list
+    def get_best_worst_rank(self, method_list, para_list):
+        self.dict_best_worst_rank = {'pre_avg': {'JSD': {},
+                                                 'EUC': {},
+                                                 'WMHD': {}},
+                                     'acc_avg': {'JSD': {},
+                                                 'EUC': {},
+                                                 'WMHD': {}},
+                                     'auc_avg': {'JSD': {},
+                                                 'EUC': {},
+                                                 'WMHD': {}}}
+        for metric in self.dict_best_worst_rank.keys():
+            for method, para in zip(method_list, para_list):
+                self.dict_best_worst_rank[metric][method].update({para: {}})
+                rank_arr = np.argsort(np.vstack([self.dict_score[metric][method][para][str(TWL)] for TWL in
+                                                 self.wbm_obj.target_wf_group_list]).flatten())
+                self.dict_best_worst_rank[metric][method][para]['best'] = rank_arr[-1]
+                self.dict_best_worst_rank[metric][method][para]['worst'] = rank_arr[0]
+
+    def get_score_summary(self, method_list, para_list, target_wf_group_list):
+        TWGL = target_wf_group_list
         dict_score = self.dict_score
         n_class = len(self.wbm_obj.target_wf_list)
         n_method = len(method_list)
-        dict_summary = {'pre': {'avg': np.empty((n_method, n_class + 1)),
-                                'std': np.empty((n_method, n_class + 1))},
-                        'acc': {'avg': np.empty((n_method, n_class + 1)),
-                                'std': np.empty((n_method, n_class + 1))},
-                        'auc': {'avg': np.empty((n_method, n_class + 1)),
-                                'std': np.empty((n_method, n_class + 1))}}
+        self.dict_summary = {'pre': {'avg': np.empty((n_method, n_class + 1)),
+                                     'std': np.empty((n_method, n_class + 1))},
+                             'acc': {'avg': np.empty((n_method, n_class + 1)),
+                                     'std': np.empty((n_method, n_class + 1))},
+                             'auc': {'avg': np.empty((n_method, n_class + 1)),
+                                     'std': np.empty((n_method, n_class + 1))}}
         for i, (method, para) in enumerate(zip(method_list, para_list)):
-            dict_summary['pre']['avg'][i, :n_class] = np.vstack(
+            self.dict_summary['pre']['avg'][i, :n_class] = np.vstack(
                 [dict_score['pre'][method][para][str(TWL)] for TWL in TWGL]).mean(axis=0)
-            dict_summary['acc']['avg'][i, :n_class] = np.vstack(
+            self.dict_summary['acc']['avg'][i, :n_class] = np.vstack(
                 [dict_score['acc'][method][para][str(TWL)] for TWL in TWGL]).mean(axis=0)
-            dict_summary['auc']['avg'][i, :n_class] = np.vstack(
+            self.dict_summary['auc']['avg'][i, :n_class] = np.vstack(
                 [dict_score['auc'][method][para][str(TWL)] for TWL in TWGL]).mean(axis=0)
-            dict_summary['pre']['std'][i, :n_class] = np.vstack(
+            self.dict_summary['pre']['std'][i, :n_class] = np.vstack(
                 [dict_score['pre'][method][para][str(TWL)] for TWL in TWGL]).std(axis=0)
-            dict_summary['acc']['std'][i, :n_class] = np.vstack(
+            self.dict_summary['acc']['std'][i, :n_class] = np.vstack(
                 [dict_score['acc'][method][para][str(TWL)] for TWL in TWGL]).std(axis=0)
-            dict_summary['auc']['std'][i, :n_class] = np.vstack(
+            self.dict_summary['auc']['std'][i, :n_class] = np.vstack(
                 [dict_score['auc'][method][para][str(TWL)] for TWL in TWGL]).std(axis=0)
 
-            dict_summary['pre']['avg'][i, n_class] = np.vstack(
+            self.dict_summary['pre']['avg'][i, n_class] = np.vstack(
                 [dict_score['pre_avg'][method][para][str(TWL)] for TWL in TWGL]).mean()
-            dict_summary['acc']['avg'][i, n_class] = np.vstack(
+            self.dict_summary['acc']['avg'][i, n_class] = np.vstack(
                 [dict_score['acc_avg'][method][para][str(TWL)] for TWL in TWGL]).mean()
-            dict_summary['auc']['avg'][i, n_class] = np.vstack(
+            self.dict_summary['auc']['avg'][i, n_class] = np.vstack(
                 [dict_score['auc_avg'][method][para][str(TWL)] for TWL in TWGL]).mean()
-            dict_summary['pre']['std'][i, n_class] = np.vstack(
+            self.dict_summary['pre']['std'][i, n_class] = np.vstack(
                 [dict_score['pre_avg'][method][para][str(TWL)] for TWL in TWGL]).std()
-            dict_summary['acc']['std'][i, n_class] = np.vstack(
+            self.dict_summary['acc']['std'][i, n_class] = np.vstack(
                 [dict_score['acc_avg'][method][para][str(TWL)] for TWL in TWGL]).std()
-            dict_summary['auc']['std'][i, n_class] = np.vstack(
+            self.dict_summary['auc']['std'][i, n_class] = np.vstack(
                 [dict_score['auc_avg'][method][para][str(TWL)] for TWL in TWGL]).std()
 
-        return dict_summary
+        score_summary_arr = np.empty((n_class + 1, n_method*6))
+        for i, metric in enumerate(self.dict_summary.keys()):
+            for j, (method, para) in enumerate(zip(method_list, para_list)):
+                column_seq = (i*n_method + j)*2
+                score_summary_arr[:, column_seq] = self.dict_summary[metric]['avg'][j]
+                score_summary_arr[:, column_seq+1] = self.dict_summary[metric]['std'][j]
+
+        return score_summary_arr
+
+    def calc_JSD_vector(self, target_id):
+        time_start = time.time()
+        JSD_vector = np.zeros(self.wbm_obj.data_len)
+        p = self.cg.weight_vector_arr[target_id]
+        for comp_id in range(self.wbm_obj.data_len):
+            q = self.cg.weight_vector_arr[comp_id]
+            if target_id == comp_id:
+                JSD_vector[comp_id] = 0
+            else:
+                JSD_vector[comp_id] = JSD(p, q)
+        time_end = time.time()
+        time_elapsed = time_end - time_start
+        return JSD_vector, time_elapsed
+
+    def calc_EUC_vector(self, target_id):
+        time_start = time.time()
+        EUC_vector = np.zeros(self.wbm_obj.data_len)
+        p = self.wbm_obj.data_without_nan[target_id]
+        for comp_id in range(self.wbm_obj.data_len):
+            q = self.wbm_obj.data_without_nan[comp_id]
+            if target_id == comp_id:
+                EUC_vector[comp_id] = 0
+            else:
+                EUC_vector[comp_id] = euclidean(p, q)
+        time_end = time.time()
+        time_elapsed = time_end - time_start
+        return EUC_vector, time_elapsed
